@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#161826">
+    <meta
+      name="description"
+      content="eTicket: explora eventos y prueba la compra de boletos en este prototipo."
+    >
+
+    <title>eTicket | Vive el próximo momento</title>
+
+    <link rel="stylesheet" href="styles.css">
+  </head>
+
+  <body>
+    <header class="top">
+      <a href="#inicio" aria-label="eTicket, inicio">
+        <img
+          src="assets/logo.png"
+          alt="eTicket"
+          class="logo"
+        >
+      </a>
+
+      <nav aria-label="Navegación principal">
+        <a href="#cartelera">Cartelera</a>
+        <a href="#boletos">Mis boletos</a>
+        <a href="#login" id="account">Iniciar sesión</a>
+        <button id="logout" class="btn secondary small" type="button" hidden>Cerrar sesión</button>
+      </nav>
+    </header>
+
+    <div class="demo">
+      Cuentas personales · Cartelera y pagos de demostración
+    </div>
+
+    <div id="timerbar" hidden></div>
+
+    <main id="app" tabindex="-1"></main>
+
+    <footer>
+      <img src="assets/logo.png" alt="eTicket">
+
+      <p>Tu próximo momento empieza aquí.</p>
+
+      <a href="#mapa">Mapa de navegación</a>
+
+      <span>eTicket · Visitante y comprador</span>
+    </footer>
+
+    <div id="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
