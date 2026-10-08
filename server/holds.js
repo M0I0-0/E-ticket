@@ -1,14 +1,11 @@
 import { randomBytes } from 'node:crypto';
+import { SAMPLE_SEATS, SAMPLE_TAKEN, SAMPLE_ZONES, SAMPLE_GENERAL_CAPACITY } from './catalog.js';
 
-// The five sample events live in app.js, not in the events table.
-const SAMPLE_SEATS = ['A', 'B', 'C', 'D'].flatMap(row => Array.from({ length: 8 }, (_, i) => `${row}${i + 1}`));
-const SAMPLE_TAKEN = ['A3', 'A4', 'B6', 'C2', 'C7', 'D5'];
-const SAMPLE_ZONES = { 1: 'Preferente', 2: 'Luneta', 3: 'General', 4: 'General', 5: 'Preferente' };
 const SEAT = /^[A-Z][1-3]?\d{1,3}$/;
 const OPEN = "('active','paying')";
 const EXPIRED = 'Tu reserva expiró. Los lugares se liberaron y no se realizó ningún cobro.';
 
-export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, paymentMs = 300000, log = console.log }) {
+export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, paymentMs = 300000, log = console.log, feeRate = () => 0.10 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS holds(
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       event_id TEXT NOT NULL, function_id TEXT NOT NULL, zone TEXT NOT NULL, kind TEXT NOT NULL,
@@ -30,6 +27,8 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
   if (!holdCols.includes('payment_attempts')) {
     db.exec('ALTER TABLE holds ADD COLUMN payment_attempts INTEGER NOT NULL DEFAULT 0');
   }
+  // T10.6: each hold keeps the service fee in force when it was created.
+  if (!holdCols.includes('fee_rate')) db.exec('ALTER TABLE holds ADD COLUMN fee_rate REAL');
 
   const conflict = (status, message, extra) => Object.assign(failure(status, message), { extra });
   const find = id => db.prepare('SELECT * FROM holds WHERE id=?').get(id);
@@ -41,7 +40,7 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
       id: h.id, eventId: h.event_id, functionId: h.function_id, zone: h.zone, kind: h.kind,
       seats: JSON.parse(h.seats), quantity: h.quantity, status: h.status, created: h.created,
       expires: h.expires, paymentStarted: h.payment_started,
-      paymentAttempts: h.payment_attempts || 0,
+      paymentAttempts: h.payment_attempts || 0, feeRate: h.fee_rate ?? 0.10,
       remainingMs: Math.max(0, h.expires - now), serverNow: now
     };
   };
@@ -57,7 +56,7 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
       const zone = SAMPLE_ZONES[id], kind = zone === 'General' ? 'general' : 'seat';
       if (String(functionId || '1') !== '1') throw failure(400, 'La función seleccionada no pertenece al evento.');
       if (zoneName && zoneName !== zone) throw failure(400, 'La zona seleccionada no pertenece al evento.');
-      return { eventId: id, functionId: '1', zone, kind, sample: true, seats: kind === 'seat' ? SAMPLE_SEATS : [], taken: kind === 'seat' ? SAMPLE_TAKEN : [], blocked: [], capacity: 24, limit: 6 };
+      return { eventId: id, functionId: '1', zone, kind, sample: true, seats: kind === 'seat' ? SAMPLE_SEATS : [], taken: kind === 'seat' ? SAMPLE_TAKEN : [], blocked: [], capacity: SAMPLE_GENERAL_CAPACITY, limit: 6 };
     }
     const event = db.prepare("SELECT payload FROM events WHERE id=? AND status='published'").get(id);
     if (!event) throw failure(404, 'El evento no está disponible para compra.');
@@ -73,19 +72,26 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     };
   }
 
-  // Seats sold or held by anyone except the requester's own open hold.
+  // Seats sold or held by anyone except the requester's own open hold. Seats held by
+  // others are reported apart (with the soonest release) so the map can show a lock.
   function occupancy(t, userId) {
-    const rows = db.prepare('SELECT s.seat, h.user_id, h.status FROM hold_seats s JOIN holds h ON h.id=s.hold_id WHERE s.event_id=? AND s.function_id=? AND s.zone=?').all(t.eventId, t.functionId, t.zone);
-    const mine = rows.filter(r => r.user_id === userId && (r.status === 'active' || r.status === 'paying')).map(r => r.seat);
-    const taken = new Set([...t.taken, ...rows.map(r => r.seat).filter(seat => !mine.includes(seat))]);
-    if (!t.sample) for (const r of db.prepare('SELECT seat FROM event_function_seats WHERE event_id=? AND function_id=? AND zone=?').all(t.eventId, t.functionId, t.zone)) taken.add(r.seat);
-    return { taken, mine };
+    const rows = db.prepare('SELECT s.seat, h.user_id, h.status, h.expires FROM hold_seats s JOIN holds h ON h.id=s.hold_id WHERE s.event_id=? AND s.function_id=? AND s.zone=?').all(t.eventId, t.functionId, t.zone);
+    const open = r => r.status === 'active' || r.status === 'paying';
+    const mine = rows.filter(r => r.user_id === userId && open(r)).map(r => r.seat);
+    const others = rows.filter(r => r.user_id !== userId && open(r));
+    const sold = new Set([...t.taken, ...rows.filter(r => !open(r)).map(r => r.seat)]);
+    if (!t.sample) for (const r of db.prepare('SELECT seat FROM event_function_seats WHERE event_id=? AND function_id=? AND zone=?').all(t.eventId, t.functionId, t.zone)) sold.add(r.seat);
+    const held = others.map(r => r.seat).filter(seat => !sold.has(seat));
+    const taken = new Set([...sold, ...held]);
+    const heldUntil = others.length ? Math.min(...others.map(r => r.expires)) : null;
+    return { taken, mine, sold: [...sold], held, heldUntil };
   }
 
   function generalCount(t, userId) {
     const held = db.prepare(`SELECT COALESCE(SUM(quantity),0) AS n FROM holds WHERE event_id=? AND function_id=? AND zone=? AND status IN ${OPEN} AND user_id<>?`).get(t.eventId, t.functionId, t.zone, userId || '').n;
+    // Sample events count their issued tickets, so a refunded ticket frees its place.
     const sold = t.sample
-      ? db.prepare("SELECT COALESCE(SUM(quantity),0) AS n FROM holds WHERE event_id=? AND function_id=? AND zone=? AND status='completed'").get(t.eventId, t.functionId, t.zone).n
+      ? db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE event_id=? AND function_id=? AND zone=? AND status IN ('valid','used')").get(t.eventId, t.functionId, t.zone).n
       : db.prepare('SELECT sold FROM event_function_sales WHERE event_id=? AND function_id=? AND zone=?').get(t.eventId, t.functionId, t.zone)?.sold || 0;
     return { sold, held, available: Math.max(0, t.capacity - sold - held) };
   }
@@ -154,8 +160,8 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     const t = target(params.get('eventId'), params.get('functionId'), params.get('zone'));
     const base = { eventId: t.eventId, functionId: t.functionId, zone: t.zone, kind: t.kind, now: clock() };
     if (t.kind === 'general') return { ...base, capacity: t.capacity, ...generalCount(t, user?.id) };
-    const { taken, mine } = occupancy(t, user?.id);
-    return { ...base, occupied: [...taken], mine };
+    const { taken, mine, sold, held, heldUntil } = occupancy(t, user?.id);
+    return { ...base, occupied: [...taken], mine, sold, held, heldUntil, blocked: t.blocked };
   }
 
   function create(user, data) {
@@ -167,8 +173,8 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     const { seats, quantity } = selection(t, data), id = randomBytes(16).toString('hex');
     try {
       transaction(() => {
-        db.prepare("INSERT INTO holds(id,user_id,event_id,function_id,zone,kind,seats,quantity,status,created,expires) VALUES(?,?,?,?,?,?,?,?,'active',?,?)")
-          .run(id, user.id, t.eventId, t.functionId, t.zone, t.kind, JSON.stringify(seats), quantity, now, now + holdMs);
+        db.prepare("INSERT INTO holds(id,user_id,event_id,function_id,zone,kind,seats,quantity,status,created,expires,fee_rate) VALUES(?,?,?,?,?,?,?,?,'active',?,?,?)")
+          .run(id, user.id, t.eventId, t.functionId, t.zone, t.kind, JSON.stringify(seats), quantity, now, now + holdMs, feeRate());
         if (t.kind === 'seat') lock(id, t, seats, user.id);
         else if (quantity > generalCount(t, user.id).available) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
       });

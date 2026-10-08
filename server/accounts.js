@@ -7,11 +7,20 @@ import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { createHolds } from './holds.js';
 import { createPayments } from './payments.js';
+import { createCatalog } from './catalog.js';
+import { createAudit } from './audit.js';
+import { createMailer } from './mailer.js';
+import { createAdmin } from './admin.js';
+import { createTickets } from './tickets.js';
+import { createNotify } from './notify.js';
+import { createRefunds } from './refunds.js';
+import { createReports } from './reports.js';
+import { createRouter, registerRoutes } from './routes.js';
 
 const derive = promisify(scrypt);
 const hash = text => createHash('sha256').update(text).digest('hex');
 const token = () => randomBytes(32).toString('hex');
-const publicUser = u => ({ id: u.id, name: u.name, firstNames: u.first_names, lastNames: u.last_names, paternalSurname: u.paternal_surname, maternalSurname: u.maternal_surname, email: u.email, role: u.role || 'comprador', verified: Boolean(u.verified), organizerStatus: u.organizer_status || 'none', organizerReason:u.organizer_reason||'' });
+const publicUser = u => ({ id: u.id, name: u.name, firstNames: u.first_names, lastNames: u.last_names, paternalSurname: u.paternal_surname, maternalSurname: u.maternal_surname, email: u.email, role: u.role || 'comprador', verified: Boolean(u.verified), organizerStatus: u.organizer_status || 'none', organizerReason:u.organizer_reason||'', blocked: Boolean(u.blocked) });
 const passwordValid = value => typeof value === 'string' && value.length >= 6 && value.length <= 15 && /[A-ZÁÉÍÓÚÜÑ]/u.test(value) && /[^\p{L}\p{N}\s]/u.test(value);
 async function passwordHash(password, salt = randomBytes(16).toString('hex')) {
   const key = await derive(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
@@ -62,7 +71,7 @@ export function createAccounts(env = {}, options = {}) {
     CREATE TABLE IF NOT EXISTS event_function_sales(event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,function_id TEXT NOT NULL,zone TEXT NOT NULL,sold INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(event_id,function_id,zone));
     CREATE TABLE IF NOT EXISTS event_function_seats(event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,function_id TEXT NOT NULL,zone TEXT NOT NULL,seat TEXT NOT NULL,order_id TEXT NOT NULL,PRIMARY KEY(event_id,function_id,zone,seat));
     CREATE TABLE IF NOT EXISTS ticket_checkins(code TEXT PRIMARY KEY,checked_by TEXT NOT NULL,checked_at INTEGER NOT NULL);`);
-  const mailer = options.transport || (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS ? nodemailer.createTransport({host:env.SMTP_HOST,port:Number(env.SMTP_PORT||465),secure:env.SMTP_SECURE!=='false',auth:{user:env.SMTP_USER,pass:env.SMTP_PASS}}) : null);
+  const smtp = options.transport || (env.SMTP_HOST && env.SMTP_USER && env.SMTP_PASS ? nodemailer.createTransport({host:env.SMTP_HOST,port:Number(env.SMTP_PORT||465),secure:env.SMTP_SECURE!=='false',auth:{user:env.SMTP_USER,pass:env.SMTP_PASS}}) : null);
   if (env.ADMIN_EMAIL) db.prepare("UPDATE users SET role='administrador' WHERE email=? COLLATE NOCASE").run(env.ADMIN_EMAIL.trim());
   if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'first_names')) db.exec("ALTER TABLE users ADD COLUMN first_names TEXT NOT NULL DEFAULT '';");
   if (!db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'last_names')) db.exec("ALTER TABLE users ADD COLUMN last_names TEXT NOT NULL DEFAULT '';");
@@ -72,9 +81,23 @@ export function createAccounts(env = {}, options = {}) {
   const limits = new Map();
   const failure = (status, message) => Object.assign(new Error(message), { status });
   const holdMinutes = Number(env.HOLD_MINUTES);
-  const holds = createHolds(db, { failure, clock: options.clock, holdMs: options.holdMs || (holdMinutes > 0 ? holdMinutes * 60000 : 600000), paymentMs: options.paymentMs, log: options.log });
-  const payments = createPayments(db, holds, { clock: options.clock, log: options.log, failure });
-  const sweeper = setInterval(() => { try { holds.sweep(); } catch (error) { console.error('Error al liberar apartados:', error.code || error.name); } }, options.sweepMs || 60000);
+  const clock = options.clock || Date.now, log = options.log || console.log;
+  const catalog = createCatalog(db);
+  const audit = createAudit(db, clock);
+  const mail = createMailer(db, { transport: smtp, from: env.SMTP_FROM || env.SMTP_USER || undefined, clock, log });
+  const admin = createAdmin(db, { failure, clock, audit });
+  const holds = createHolds(db, { failure, clock: options.clock, holdMs: options.holdMs || (holdMinutes > 0 ? holdMinutes * 60000 : 600000), paymentMs: options.paymentMs, log: options.log, feeRate: admin.feeRate });
+  const tickets = createTickets(db, { failure, clock, catalog, mailer: mail, audit });
+  const notify = createNotify(db, { mailer: mail, catalog, tickets, clock });
+  const payments = createPayments(db, holds, { clock: options.clock, log: options.log, failure, catalog, tickets, onPaid: order => { tickets.sendConfirmation(order.id); notify.afterSale(order.eventId, order.functionId); } });
+  const refunds = createRefunds(db, { failure, clock, catalog, tickets, mailer: mail, audit, notify });
+  const reports = createReports(db, { failure, catalog, tickets });
+  const router = createRouter();
+  registerRoutes(router, { failure, admin, tickets, refunds, reports, audit, mailer: mail });
+  // A webhook without the shared secret could mark any hold as paid, so it is required.
+  const webhookSecret = options.webhookSecret || env.PAYMENT_WEBHOOK_SECRET || '';
+  const scheduled = () => { holds.sweep(); return notify.runScheduled(); };
+  const sweeper = setInterval(() => { try { scheduled(); } catch (error) { console.error('Error en tareas programadas:', error.code || error.name); } }, options.sweepMs || 60000);
   sweeper.unref?.();
   const cookie = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('eticket_session='))?.slice(16) || '';
   const sessionUser = req => db.prepare(`SELECT u.* FROM users u JOIN sessions s ON u.id=s.user_id
@@ -95,6 +118,15 @@ export function createAccounts(env = {}, options = {}) {
       res.setHeader('X-Content-Type-Options', 'nosniff');
       res.end(JSON.stringify(body));
     };
+    const send = (status, body, type, headers = {}) => {
+      res.statusCode = status;
+      res.setHeader('Content-Type', type);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      for (const [key, value] of Object.entries(headers)) res.setHeader(key, value);
+      res.end(body);
+    };
+    const finish = out => { if (!res.writableEnded) reply(200, out ?? { ok: true }); };
     try {
       const now = Date.now();
       db.prepare('DELETE FROM sessions WHERE expires<=?').run(now);
@@ -107,7 +139,7 @@ export function createAccounts(env = {}, options = {}) {
       if (req.method === 'GET' && path === '/api/orders') {
         const user = activeUser;
         if (!user) throw failure(401, 'Inicia sesión para consultar tus datos.');
-        return reply(200, { orders: JSON.parse(db.prepare('SELECT payload FROM user_orders WHERE user_id=?').get(user.id)?.payload || '[]') });
+        return reply(200, { orders: tickets.ordersFor(user) });
       }
       if (!['GET', 'POST', 'PUT'].includes(req.method)) throw failure(405, 'Método no permitido.');
       if (req.method !== 'GET' && !req.headers['content-type']?.startsWith('application/json')) throw failure(415, 'Usa JSON.');
@@ -126,13 +158,15 @@ export function createAccounts(env = {}, options = {}) {
         if (path === '/api/venues') { admin(); return reply(200,{venues:db.prepare('SELECT * FROM venues').all().map(v=>({...v,zones:JSON.parse(v.zones)}))}); }
         if (path === '/api/organizer/venues') { if(!activeUser||activeUser.role!=='organizador')throw failure(403,'Acceso reservado a organizadores aprobados.');return reply(200,{venues:db.prepare('SELECT * FROM venues ORDER BY name').all().map(v=>({...v,zones:JSON.parse(v.zones)}))}); }
         const rows=activeUser?.role==='administrador'?db.prepare('SELECT * FROM events ORDER BY updated DESC').all():activeUser?.role==='organizador'?db.prepare("SELECT * FROM events WHERE owner_id=? OR status='published' ORDER BY updated DESC").all(activeUser.id):db.prepare("SELECT * FROM events WHERE status='published' ORDER BY updated DESC").all();
-        return reply(200,{events:rows.map(e=>{const payload=JSON.parse(e.payload),sales=Object.fromEntries(db.prepare('SELECT zone,sold FROM event_sales WHERE event_id=?').all(e.id).map(x=>[x.zone,x.sold])),sessionSales=db.prepare('SELECT function_id,zone,sold FROM event_function_sales WHERE event_id=?').all(e.id),sessionSeats=db.prepare('SELECT function_id,zone,seat FROM event_function_seats WHERE event_id=?').all(e.id);return{...payload,zones:(payload.zones||[]).map(z=>({...z,sold:sales[z.name]||0,salesByFunction:Object.fromEntries(sessionSales.filter(s=>s.zone===z.name).map(s=>[s.function_id,s.sold])),occupiedByFunction:Object.fromEntries((payload.functions||[{id:'1'}]).map(f=>[f.id,sessionSeats.filter(s=>s.zone===z.name&&s.function_id===String(f.id)).map(s=>s.seat)]))})),id:e.id,status:e.status,reviewReason:e.review_reason,ownerId:e.owner_id,sold:Object.values(sales).reduce((a,b)=>a+b,0)}})});
+        return reply(200,{events:rows.map(e=>{const payload=JSON.parse(e.payload),sales=Object.fromEntries(db.prepare('SELECT zone,sold FROM event_sales WHERE event_id=?').all(e.id).map(x=>[x.zone,x.sold])),sessionSales=db.prepare('SELECT function_id,zone,sold FROM event_function_sales WHERE event_id=?').all(e.id),sessionSeats=db.prepare('SELECT function_id,zone,seat FROM event_function_seats WHERE event_id=?').all(e.id);return{...payload,zones:(payload.zones||[]).map(z=>({...z,sold:sales[z.name]||0,salesByFunction:Object.fromEntries(sessionSales.filter(s=>s.zone===z.name).map(s=>[s.function_id,s.sold])),occupiedByFunction:Object.fromEntries((payload.functions||[{id:'1'}]).map(f=>[f.id,sessionSeats.filter(s=>s.zone===z.name&&s.function_id===String(f.id)).map(s=>s.seat)]))})),id:e.id,status:e.status,reviewReason:e.review_reason,ownerId:e.owner_id,sold:Object.values(sales).reduce((a,b)=>a+b,0)}}),availability:tickets.catalogStatus()});
       }
-      if (req.method === 'GET' && path === '/api/admin/users') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,{users:db.prepare('SELECT id,email,name,role FROM users ORDER BY name').all()}); }
+      if (req.method === 'GET' && path === '/api/admin/users') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,{users:admin.searchUsers(new URL(req.url,'http://localhost').searchParams.get('q')||'')}); }
       if (req.method === 'GET' && path === '/api/admin/holds') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,holds.adminSummary()); }
       if (req.method === 'GET' && path === '/api/admin/unresolved-payments') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,{payments:payments.getUnresolvedPayments()}); }
       if (req.method === 'GET' && path === '/api/holds/current') { if(!activeUser)throw failure(401,'Inicia sesión para continuar tu compra.');return reply(200,holds.current(activeUser)); }
       if (req.method === 'GET' && path === '/api/availability') return reply(200,holds.availability(activeUser,new URL(req.url,'http://localhost').searchParams));
+      const route = router.match(req.method, path), query = new URL(req.url, 'http://localhost').searchParams;
+      if (route && req.method === 'GET') return finish(await route.handler({ user: activeUser, params: route.params, query, send, reply }));
       for await (const chunk of req) {
         text += chunk;
         if (Buffer.byteLength(text) > (path === '/api/orders' ? 512000 : 8192)) throw failure(413, 'Solicitud demasiado grande.');
@@ -140,10 +174,14 @@ export function createAccounts(env = {}, options = {}) {
       let data;
       try { data = JSON.parse(text); } catch { throw failure(400, 'Solicitud inválida.'); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw failure(400, 'Solicitud inválida.');
-      const admin = () => { if (!activeUser || activeUser.role !== 'administrador') throw failure(403, 'Acceso reservado al administrador.'); };
+      const requireAdmin = () => { if (!activeUser || activeUser.role !== 'administrador') throw failure(403, 'Acceso reservado al administrador.'); };
+      if (route) return finish(await route.handler({ user: activeUser, data, params: route.params, query, send, reply }));
+      // T10.5: a blocked account keeps its tickets but cannot start or pay purchases.
+      const blocked = () => { if (activeUser?.blocked) throw failure(403, 'Tu cuenta está bloqueada: no puedes comprar. Tus boletos siguen siendo válidos.'); };
       if (path === '/api/holds' || path.startsWith('/api/holds/')) {
         if (!activeUser) throw failure(401, 'Inicia sesión para apartar tus lugares.');
         if (activeUser.role === 'taquilla') throw failure(403, 'Las cuentas de taquilla no pueden comprar boletos.');
+        if (req.method === 'POST' && path === '/api/holds') blocked();
         const [, , , id, action] = path.split('/');
         if (req.method === 'POST' && !id) return reply(201, { hold: holds.create(activeUser, data) });
         if (req.method === 'PUT' && id && !action) return reply(200, holds.update(activeUser, id, data));
@@ -155,21 +193,26 @@ export function createAccounts(env = {}, options = {}) {
       if (path === '/api/payments/charge' && req.method === 'POST') {
         if (!activeUser) throw failure(401, 'Inicia sesión para pagar.');
         if (activeUser.role === 'taquilla') throw failure(403, 'Las cuentas de taquilla no pueden comprar boletos.');
+        blocked();
         const result = payments.charge(activeUser, data);
         return reply(result.ok ? 200 : (result.cancelled ? 400 : 402), result);
       }
       if (path === '/api/payments/webhook' && req.method === 'POST') {
+        const given = Buffer.from(String(req.headers['x-webhook-secret'] || '')), expected = Buffer.from(webhookSecret);
+        if (!webhookSecret || given.length !== expected.length || !timingSafeEqual(given, expected)) throw failure(401, 'Firma del webhook inválida.');
         const result = payments.webhook(data);
         return reply(200, result);
       }
       if (path.startsWith('/api/admin/unresolved-payments/') && path.endsWith('/resolve') && req.method === 'POST') {
-        admin();
+        requireAdmin();
         const id = path.split('/')[4];
         return reply(200, payments.resolveOrphanPayment(id, data?.notes));
       }
-      if (path === '/api/admin/users' && req.method === 'PUT') { admin();if(!['taquilla','comprador'].includes(data.role))throw failure(400,'Rol no permitido.');db.prepare('UPDATE users SET role=? WHERE id=?').run(data.role,String(data.userId));return reply(200,{ok:true}); }
-      if (path === '/api/box-office/check' && req.method === 'POST') { if(!activeUser||activeUser.role!=='taquilla')throw failure(403,'Acceso reservado a taquilla.');const code=String(data.code||'').trim();if(!code)throw failure(400,'Escribe el código del boleto.');for(const row of db.prepare('SELECT user_id,payload FROM user_orders').all()){const order=JSON.parse(row.payload).find(o=>o.tickets?.some(t=>t.code===code));const ticket=order?.tickets.find(t=>t.code===code);if(!ticket)continue;if(db.prepare('SELECT code FROM ticket_checkins WHERE code=?').get(code))throw failure(409,'Este boleto ya fue validado.');db.prepare('INSERT INTO ticket_checkins VALUES(?,?,?)').run(code,activeUser.id,now);return reply(200,{valid:true,eventId:order.eventId,owner:ticket.owner});}throw failure(404,'No encontramos ese boleto.'); }
+      if (path === '/api/admin/users' && req.method === 'PUT') { requireAdmin();if(!['taquilla','comprador'].includes(data.role))throw failure(400,'Rol no permitido.');const target=db.prepare('SELECT * FROM users WHERE id=?').get(String(data.userId));if(!target)throw failure(404,'Usuario no encontrado.');if(target.role==='administrador')throw failure(400,'No se puede cambiar el rol de un administrador.');db.prepare('UPDATE users SET role=? WHERE id=?').run(data.role,target.id);audit.record(activeUser,'rol.cambiado',{targetType:'usuario',targetId:target.email,details:`${target.role} → ${data.role}`});return reply(200,{ok:true}); }
+      // The old check trusted codes stored by the buyer; validation now goes through POST /api/scan.
+      if (path === '/api/box-office/check' && req.method === 'POST') throw failure(410, 'Usa el escáner de acceso: elige tu evento y función asignados.');
       const deliverCode = async (user,purpose) => {
+        const mailer = smtp;
         if (!mailer) throw failure(503,'El correo requiere configurar SMTP_HOST, SMTP_USER y SMTP_PASS.');
         const code=String(randomBytes(4).readUInt32BE(0)%1000000).padStart(6,'0');
         db.prepare('DELETE FROM challenges WHERE user_id=? AND purpose=?').run(user.id,purpose);
@@ -181,10 +224,10 @@ export function createAccounts(env = {}, options = {}) {
       if (path === '/api/auth/forgot' && req.method === 'POST') { const email=String(data.email||'').trim().toLowerCase(),u=db.prepare('SELECT * FROM users WHERE email=?').get(email);if(u)await deliverCode(u,'reset');return reply(200,{ok:true}); }
       if (path === '/api/auth/reset' && req.method === 'POST') { const email=String(data.email||'').trim().toLowerCase(),u=db.prepare('SELECT * FROM users WHERE email=?').get(email),c=u&&db.prepare("SELECT * FROM challenges WHERE user_id=? AND purpose='reset'").get(u.id);if(!u||!c||c.expires<=now||!timingSafeEqual(Buffer.from(hash(String(data.code||''))),Buffer.from(c.code_hash))){if(c)db.prepare('UPDATE challenges SET attempts=attempts+1 WHERE id=?').run(c.id);throw failure(400,'El código es incorrecto o venció.');}if(!passwordValid(data.password))throw failure(400,'La contraseña debe incluir 6 a 15 caracteres, mayúscula y símbolo.');db.prepare('UPDATE users SET password_hash=?,failed_logins=0,locked_until=0 WHERE id=?').run(await passwordHash(data.password),u.id);db.prepare('DELETE FROM sessions WHERE user_id=?').run(u.id);db.prepare("DELETE FROM challenges WHERE user_id=? AND purpose='reset'").run(u.id);return reply(200,{ok:true}); }
       if (path === '/api/auth/organizer-request' && req.method === 'POST') { if(!activeUser)throw failure(401,'Inicia sesión.');if(activeUser.role!=='comprador')throw failure(409,'La cuenta ya tiene rol o solicitud.');db.prepare("UPDATE users SET organizer_status='pending' WHERE id=?").run(activeUser.id);return reply(200,{ok:true}); }
-      if (path === '/api/admin/organizers' && req.method === 'GET') { admin();return reply(200,{users:db.prepare("SELECT id,email,name,organizer_status FROM users WHERE organizer_status IN ('pending','rejected')").all()}); }
-      if (path === '/api/admin/organizers' && req.method === 'PUT') { admin();if(!data.approve&&!String(data.reason||'').trim())throw failure(400,'Escribe el motivo del rechazo.');db.prepare("UPDATE users SET role=?,organizer_status=?,organizer_reason=? WHERE id=? AND organizer_status='pending'").run(data.approve?'organizador':'comprador',data.approve?'approved':'rejected',String(data.reason||''),String(data.userId));return reply(200,{ok:true}); }
-      if (path === '/api/venues' && req.method === 'GET') { admin();return reply(200,{venues:db.prepare('SELECT * FROM venues').all().map(v=>({...v,zones:JSON.parse(v.zones)}))}); }
-      if (path === '/api/venues' && req.method === 'POST') { admin();if(!String(data.name||'').trim()||!Array.isArray(data.zones)||!data.zones.length)throw failure(400,'Agrega nombre y zonas.');const id=token();db.prepare('INSERT INTO venues VALUES(?,?,?,?,?)').run(id,String(data.name).trim(),String(data.city||''),JSON.stringify(data.zones),activeUser.id);return reply(201,{id}); }
+      if (path === '/api/admin/organizers' && req.method === 'GET') { requireAdmin();return reply(200,{users:db.prepare("SELECT id,email,name,organizer_status FROM users WHERE organizer_status IN ('pending','rejected')").all()}); }
+      if (path === '/api/admin/organizers' && req.method === 'PUT') { requireAdmin();if(!data.approve&&!String(data.reason||'').trim())throw failure(400,'Escribe el motivo del rechazo.');const changed=db.prepare("UPDATE users SET role=?,organizer_status=?,organizer_reason=? WHERE id=? AND organizer_status='pending'").run(data.approve?'organizador':'comprador',data.approve?'approved':'rejected',String(data.reason||''),String(data.userId)).changes;if(changed)audit.record(activeUser,data.approve?'organizador.aprobado':'organizador.rechazado',{targetType:'usuario',targetId:db.prepare('SELECT email FROM users WHERE id=?').get(String(data.userId))?.email,details:String(data.reason||'')});return reply(200,{ok:true}); }
+      if (path === '/api/venues' && req.method === 'GET') { requireAdmin();return reply(200,{venues:db.prepare('SELECT * FROM venues').all().map(v=>({...v,zones:JSON.parse(v.zones)}))}); }
+      if (path === '/api/venues' && req.method === 'POST') { requireAdmin();if(!String(data.name||'').trim()||!Array.isArray(data.zones)||!data.zones.length)throw failure(400,'Agrega nombre y zonas.');const id=token();db.prepare('INSERT INTO venues VALUES(?,?,?,?,?)').run(id,String(data.name).trim(),String(data.city||''),JSON.stringify(data.zones),activeUser.id);return reply(201,{id}); }
       if (path === '/api/events' && req.method === 'POST') {
         if(!activeUser||activeUser.role!=='organizador')throw failure(403,'Se requiere un organizador aprobado.');
         if(!String(data.name||'').trim()||!Array.isArray(data.zones)||!data.zones.length)throw failure(400,'El evento necesita nombre y al menos una zona.');
@@ -198,8 +241,8 @@ export function createAccounts(env = {}, options = {}) {
       if (path === '/api/events' && req.method === 'GET') { const rows=activeUser?.role==='administrador'?db.prepare('SELECT * FROM events ORDER BY updated DESC').all():activeUser?.role==='organizador'?db.prepare("SELECT * FROM events WHERE owner_id=? OR status='published' ORDER BY updated DESC").all(activeUser.id):db.prepare("SELECT * FROM events WHERE status='published' ORDER BY updated DESC").all();return reply(200,{events:rows.map(e=>({...JSON.parse(e.payload),id:e.id,status:e.status,reviewReason:e.review_reason}))}); }
       if (path === '/api/events' && req.method === 'POST' && data.id) { if(!activeUser||activeUser.role!=='organizador')throw failure(403,'Se requiere un organizador aprobado.');const collision=db.prepare('SELECT owner_id FROM events WHERE id=?').get(String(data.id));if(collision&&collision.owner_id!==activeUser.id)throw failure(404,'No puedes modificar eventos de otra cuenta.'); }
       if(path==='/api/events'&&req.method==='POST'&&data.id&&activeUser?.role==='organizador'){const previous=db.prepare('SELECT payload FROM events WHERE id=? AND owner_id=?').get(String(data.id),activeUser.id);if(previous){const old=JSON.parse(previous.payload),sold=db.prepare('SELECT COALESCE(SUM(sold),0) AS total FROM event_sales WHERE event_id=?').get(String(data.id)).total;if(sold&&JSON.stringify(old.functions||[])!==JSON.stringify(data.functions||[]))throw failure(409,'No puedes cambiar o quitar funciones después de registrar ventas.');}}
-      if (path === '/api/events' && req.method === 'POST') { if(!activeUser||activeUser.role!=='organizador')throw failure(403,'Se requiere un organizador aprobado.');const id=String(data.id||randomBytes(4).readUInt32BE(0)),existing=db.prepare('SELECT * FROM events WHERE id=? AND owner_id=?').get(id,activeUser.id),old=existing&&JSON.parse(existing.payload);if(existing)for(const s of db.prepare('SELECT zone,sold FROM event_sales WHERE event_id=?').all(id)){const before=(old.zones||[]).find(z=>z.name===s.zone),after=(data.zones||[]).find(z=>z.name===s.zone);if(!after||Number(after.capacity)<s.sold)throw failure(409,`Zona ${s.zone}: ${s.sold} boletos vendidos; no se puede quitar ni reducir el cupo.`);if(s.sold&&Number(before?.price)!==Number(after.price))throw failure(409,`El precio de ${s.zone} no se puede cambiar porque ya hay ventas.`);}db.prepare("INSERT INTO events VALUES(?,?,?,'draft','',?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,status='draft',updated=excluded.updated").run(id,activeUser.id,JSON.stringify({...data,id}),now,now);return reply(200,{id,status:'draft'}); }
-      if (path.startsWith('/api/events/') && req.method === 'POST') { const [, , , id, action]=path.split('/'),ev=db.prepare('SELECT * FROM events WHERE id=?').get(id);if(!ev)throw failure(404,'Evento no encontrado.');if(action==='submit'){if(!activeUser||activeUser.role!=='organizador'||ev.owner_id!==activeUser.id)throw failure(403,'No puedes enviar este evento.');db.prepare("UPDATE events SET status='review',review_reason='',updated=? WHERE id=?").run(now,id);return reply(200,{ok:true});}if(action==='decision'){admin();if(!data.approve&&!String(data.reason||'').trim())throw failure(400,'Escribe el motivo del rechazo.');db.prepare('UPDATE events SET status=?,review_reason=?,updated=? WHERE id=?').run(data.approve?'published':'rejected',String(data.reason||''),now,id);return reply(200,{ok:true});}if(action==='delete'){if(!activeUser||activeUser.role!=='organizador'||ev.owner_id!==activeUser.id)throw failure(403,'No puedes borrar este evento.');const sold=db.prepare('SELECT COALESCE(SUM(sold),0) AS count FROM event_sales WHERE event_id=?').get(id).count;if(sold)throw failure(409,`No se puede borrar: el evento ya tiene ${sold} boletos vendidos.`);db.prepare('DELETE FROM events WHERE id=?').run(id);return reply(200,{ok:true});} }
+      if (path === '/api/events' && req.method === 'POST') { if(!activeUser||activeUser.role!=='organizador')throw failure(403,'Se requiere un organizador aprobado.');const id=String(data.id||randomBytes(4).readUInt32BE(0)),existing=db.prepare('SELECT * FROM events WHERE id=? AND owner_id=?').get(id,activeUser.id),old=existing&&JSON.parse(existing.payload);if(existing?.status==='cancelled')throw failure(409,'El evento fue cancelado y ya no se puede editar.');if(existing)for(const s of db.prepare('SELECT zone,sold FROM event_sales WHERE event_id=?').all(id)){const before=(old.zones||[]).find(z=>z.name===s.zone),after=(data.zones||[]).find(z=>z.name===s.zone);if(!after||Number(after.capacity)<s.sold)throw failure(409,`Zona ${s.zone}: ${s.sold} boletos vendidos; no se puede quitar ni reducir el cupo.`);if(s.sold&&Number(before?.price)!==Number(after.price))throw failure(409,`El precio de ${s.zone} no se puede cambiar porque ya hay ventas.`);}db.prepare("INSERT INTO events VALUES(?,?,?,'draft','',?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,status='draft',updated=excluded.updated").run(id,activeUser.id,JSON.stringify({...data,id}),now,now);return reply(200,{id,status:'draft'}); }
+      if (path.startsWith('/api/events/') && req.method === 'POST') { const [, , , id, action]=path.split('/'),ev=db.prepare('SELECT * FROM events WHERE id=?').get(id);if(!ev)throw failure(404,'Evento no encontrado.');if(action==='submit'){if(!activeUser||activeUser.role!=='organizador'||ev.owner_id!==activeUser.id)throw failure(403,'No puedes enviar este evento.');if(ev.status==='cancelled')throw failure(409,'El evento fue cancelado.');db.prepare("UPDATE events SET status='review',review_reason='',updated=? WHERE id=?").run(now,id);return reply(200,{ok:true});}if(action==='decision'){requireAdmin();if(ev.status!=='review')throw failure(409,'Este evento no está en revisión.');if(!data.approve&&!String(data.reason||'').trim())throw failure(400,'Escribe el motivo del rechazo.');db.prepare('UPDATE events SET status=?,review_reason=?,updated=? WHERE id=?').run(data.approve?'published':'rejected',String(data.reason||''),now,id);audit.record(activeUser,data.approve?'evento.aprobado':'evento.rechazado',{targetType:'evento',targetId:id,eventId:id,details:`${JSON.parse(ev.payload).name}${data.reason?` · ${data.reason}`:''}`});notify.eventDecision(id,Boolean(data.approve),String(data.reason||''));return reply(200,{ok:true});}if(action==='delete'){if(!activeUser||activeUser.role!=='organizador'||ev.owner_id!==activeUser.id)throw failure(403,'No puedes borrar este evento.');const sold=db.prepare('SELECT COALESCE(SUM(sold),0) AS count FROM event_sales WHERE event_id=?').get(id).count;if(sold)throw failure(409,`No se puede borrar: el evento ya tiene ${sold} boletos vendidos.`);db.prepare('DELETE FROM events WHERE id=?').run(id);return reply(200,{ok:true});} }
       if (path === '/api/auth/logout' && req.method === 'POST') {
         db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hash(cookie(req)));
         res.setHeader('Set-Cookie', `eticket_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secureCookie}`);
@@ -289,5 +332,11 @@ export function createAccounts(env = {}, options = {}) {
       reply(error.status || 500, { error: error.status ? error.message : 'No se pudo completar la operación. Inténtalo de nuevo.', ...(error.status && error.extra) });
     }
   };
-  return { middleware, close: () => { clearInterval(sweeper); db.close(); } };
+  return {
+    middleware,
+    // Tests wait for queued e-mails and run the scheduled tasks with a simulated clock.
+    flush: () => mail.flush(),
+    runScheduled: scheduled,
+    close: () => { clearInterval(sweeper); mail.close(); db.close(); },
+  };
 }

@@ -1,12 +1,16 @@
 import { cpSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 import { createAccounts } from './server/accounts.js';
 
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), ''), ...process.env };
   return {
-  plugins: [{
+  plugins: [
+    // npm run start:https: phones only open the camera on a secure page (T09.5).
+    ...(mode === 'https' ? [basicSsl({ name: 'eticket-local' })] : []),
+    {
     name: 'accounts-api',
     configureServer(server) {
       const accounts = createAccounts(env);

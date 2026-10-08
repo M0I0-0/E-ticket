@@ -116,11 +116,18 @@ test('role routes protect organizer, administrator and event publication flows',
   assert.equal((await f.request('orders',{orders:[sale]},organizer.cookie,'PUT')).status,200);
   assert.equal((await f.request('events',{id:draft.body.id,name:'Concierto editado',date:'2026-11-01',hour:'20:00',functions:[{id:'1',date:'2026-11-01',hour:'20:00'}],zones:[{name:'General',price:250,capacity:60}]},organizer.cookie)).status,409);
   assert.equal((await f.request(`events/${draft.body.id}/delete`,{},organizer.cookie)).status,409);
-  assert.equal((await f.request('box-office/check',{code:'missing'},organizer.cookie)).status,403);
+  // Gate access needs box-office staff assigned to the function; codes a buyer saves by hand are not tickets.
+  const scan=(code)=>f.request('scan',{code,eventId:draft.body.id,functionId:'1',gate:'Puerta 1'},organizer.cookie);
+  assert.equal((await scan('missing')).status,403);
   assert.equal((await f.request('admin/users',{userId:organizer.body.user.id,role:'taquilla'},admin.cookie,'PUT')).status,200);
-  assert.equal((await f.request('box-office/check',{code:'missing'},organizer.cookie)).status,404);
-  assert.equal((await f.request('box-office/check',{code:'dynamic-ticket'},organizer.cookie)).status,200);
-  assert.equal((await f.request('box-office/check',{code:'dynamic-ticket'},organizer.cookie)).status,409);
+  assert.equal((await scan('missing')).status,403);
+  assert.equal((await f.request(`events/${draft.body.id}/staff`,{userId:organizer.body.user.id,functionId:'1'},admin.cookie)).status,200);
+  assert.equal((await scan('missing')).body.result,'invalid');
+  assert.equal((await scan('dynamic-ticket')).body.result,'invalid');
+  const held=(await f.request('holds',{eventId:draft.body.id,functionId:'1',zone:'General',quantity:1},admin.cookie)).body.hold;
+  const paid=await f.request('payments/charge',{holdId:held.id,token:'tok_sandbox_ok',last4:'4242',idempotencyKey:'ik-role-routes'},admin.cookie);
+  assert.equal((await scan(paid.body.order.tickets[0].code)).body.result,'valid');
+  assert.equal((await scan(paid.body.order.tickets[0].code)).body.result,'used');
   const applicant=await f.verified('applicant@example.com');await f.request('auth/organizer-request',{},applicant.cookie);
   assert.equal((await f.request('admin/organizers',{userId:applicant.body.user.id,approve:false},admin.cookie,'PUT')).status,400);
   assert.equal((await f.request('admin/organizers',{userId:applicant.body.user.id,approve:false,reason:'Faltan datos de contacto.'},admin.cookie,'PUT')).status,200);

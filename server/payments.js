@@ -1,9 +1,7 @@
 import { randomBytes } from 'node:crypto';
+import { VAT_RATE, round } from './catalog.js';
 
-const SAMPLE_PRICES = { '1': 450, '2': 280, '3': 650, '4': 320, '5': 390 };
-const SAMPLE_ZONES = { '1': 'Preferente', '2': 'Luneta', '3': 'General', '4': 'General', '5': 'Preferente' };
-
-export function createPayments(db, holds, { clock = Date.now, log = console.log, failure }) {
+export function createPayments(db, holds, { clock = Date.now, log = console.log, failure, catalog, tickets, onPaid = () => {} }) {
   // Ensure table holds has payment_attempts column
   const holdCols = db.prepare('PRAGMA table_info(holds)').all().map(c => c.name);
   if (!holdCols.includes('payment_attempts')) {
@@ -41,34 +39,23 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
     CREATE INDEX IF NOT EXISTS orphan_payments_status ON orphan_payments(status);
   `);
 
+  // The amount always comes from the server: zone price, the hold's service fee (T10.6) and VAT.
   function calculateAmount(hold) {
-    const id = String(hold.event_id);
-    let basePrice = SAMPLE_PRICES[id];
-    let zoneName = SAMPLE_ZONES[id];
-    let fnDate = '2026-11-14', fnHour = '20:00';
-
-    if (!basePrice) {
-      const eventRow = db.prepare("SELECT payload FROM events WHERE id=? AND status='published'").get(id);
-      if (!eventRow) throw failure(404, 'El evento ya no está disponible para compra.');
-      const payload = JSON.parse(eventRow.payload);
-      const zone = payload.zones?.find(z => z.name === hold.zone) || payload.zones?.[0];
-      if (!zone) throw failure(400, 'La zona del apartado no existe.');
-      basePrice = Number(zone.price) || 0;
-      zoneName = zone.name;
-      const fn = payload.functions?.find(f => String(f.id) === String(hold.function_id)) || payload.functions?.[0];
-      if (fn) { fnDate = fn.date; fnHour = fn.hour; }
-    }
-
+    const ev = catalog.event(hold.event_id);
+    if (!ev || ev.status !== 'published') throw failure(404, 'El evento ya no está disponible para compra.');
+    const zone = catalog.zone(ev, hold.zone) || ev.zones[0];
+    if (!zone) throw failure(400, 'La zona del apartado no existe.');
+    const fn = catalog.fn(ev, hold.function_id) || ev.functions[0];
+    const basePrice = zone.price, feeRate = hold.fee_rate ?? 0.10;
     const count = hold.kind === 'seat' ? JSON.parse(hold.seats).length : hold.quantity;
-    const base = Math.round(basePrice * count * 100) / 100;
-    const fee = Math.round(base * 0.10 * 100) / 100;
-    const vat = Math.round((base + fee) * 0.16 * 100) / 100;
-    const total = Math.round((base + fee + vat) * 100) / 100;
-
-    return { basePrice, zoneName, fnDate, fnHour, count, base, fee, vat, total };
+    const base = round(basePrice * count);
+    const fee = round(base * feeRate);
+    const vat = round((base + fee) * VAT_RATE);
+    const total = round(base + fee + vat);
+    return { basePrice, zoneName: zone.name, fnDate: fn?.date, fnHour: fn?.hour, count, base, fee, vat, total, feeRate };
   }
 
-  function confirmPaymentAndCreateOrder({ user, hold, transactionId, amount, breakdown, last4, brand, idempotencyKey }) {
+  function confirmPaymentAndCreateOrder({ user, hold, transactionId, amount, breakdown, last4, brand, idempotencyKey, note = '' }) {
     db.exec('BEGIN IMMEDIATE');
     try {
       // Re-verify hold status inside transaction
@@ -102,33 +89,11 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
         ? JSON.parse(hold.seats)
         : Array.from({ length: hold.quantity }, (_, i) => `Acceso ${i + 1}`);
 
-      const order = {
-        id: orderId,
-        eventId: Number(hold.event_id) || hold.event_id,
-        holdId: hold.id,
-        time: new Date(now).toISOString(),
-        total: amount,
-        breakdown,
-        payment: {
-          method: 'card',
-          last4,
-          brand,
-          transactionId,
-        },
-        zone: breakdown.zoneName || hold.zone,
-        functionId: hold.function_id,
-        functionDate: breakdown.fnDate,
-        functionHour: breakdown.fnHour,
-        tickets: seats.map((seat, i) => ({
-          seat,
-          code: `${orderId}-${String(i + 1).padStart(3, '0')}`,
-          owner: user.name,
-          transferred: false,
-        })),
-      };
-
       // Completes hold inside transaction
-      holds.completeForOrder(user, order);
+      holds.completeForOrder(user, { id: orderId, holdId: hold.id, eventId: hold.event_id, tickets: seats.map(seat => ({ seat })) });
+
+      // T09.1: one ticket per seat, each with its own unguessable code.
+      const order = tickets.issue({ user, hold: currentHold, orderId, breakdown, payment: { transactionId, last4, brand } });
 
       // Update sales for published events
       const eventRow = db.prepare("SELECT * FROM events WHERE id=? AND status='published'").get(String(hold.event_id));
@@ -152,19 +117,15 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
         }
       }
 
-      // Prepend order to user_orders
-      const existingRow = db.prepare('SELECT payload FROM user_orders WHERE user_id=?').get(user.id);
-      const existingOrders = existingRow ? JSON.parse(existingRow.payload) : [];
-      db.prepare('INSERT INTO user_orders (user_id,payload) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload')
-        .run(user.id, JSON.stringify([order, ...existingOrders]));
-
       // Record successful payment
       db.prepare(`
         INSERT INTO payments (id, idempotency_key, hold_id, user_id, amount, status, last4, brand, error_message, created)
-        VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, '', ?)
-      `).run(transactionId, idempotencyKey, hold.id, user.id, amount, last4, brand, now);
+        VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?, ?)
+      `).run(transactionId, idempotencyKey, hold.id, user.id, amount, last4, brand, note, now);
 
       db.exec('COMMIT');
+      // After the commit: e-mail with the PDFs (T09.3) and the sold-out check (T10.8).
+      try { onPaid(order); } catch (error) { log(`Aviso posterior al pago falló: ${error.message}`); }
       return { ok: true, order, payment: { transactionId, last4, brand, amount } };
     } catch (error) {
       db.exec('ROLLBACK');
@@ -195,9 +156,8 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
     const existingPayment = db.prepare('SELECT * FROM payments WHERE idempotency_key=?').get(idempotencyKey);
     if (existingPayment) {
       if (existingPayment.status === 'approved') {
-        const userOrdersRow = db.prepare('SELECT payload FROM user_orders WHERE user_id=?').get(user.id);
-        const userOrders = userOrdersRow ? JSON.parse(userOrdersRow.payload) : [];
-        const existingOrder = userOrders.find(o => o.holdId === existingPayment.hold_id || o.payment?.transactionId === existingPayment.id);
+        const row = tickets.orderByPayment(existingPayment.id);
+        const existingOrder = row ? tickets.orderView(row, user.id) : undefined;
         return {
           ok: true,
           duplicate: true,
@@ -326,10 +286,13 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
       return { ok: true, duplicate: true, paymentId: existing.id };
     }
 
+    // The order total is always the server's own calculation; a different reported amount is only noted.
     const breakdown = calculateAmount(hold);
-    const finalAmount = Number(amount) || breakdown.total;
+    const finalAmount = breakdown.total;
+    const note = amount !== undefined && Math.abs(Number(amount) - finalAmount) > 0.005 ? `Monto informado por la pasarela: ${Number(amount).toFixed(2)}; se usó el calculado: ${finalAmount.toFixed(2)}` : '';
 
     return confirmPaymentAndCreateOrder({
+      note,
       user,
       hold,
       transactionId: paymentId,

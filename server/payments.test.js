@@ -14,7 +14,7 @@ async function fixture(t, options = {}) {
   const filename = join(dir, 'payments.sqlite');
   const messages = [], clock = { now: Date.now() };
   const app = createAccounts({ ADMIN_EMAIL: 'admin@example.com' }, {
-    filename, clock: () => clock.now, log: () => {},
+    filename, clock: () => clock.now, log: () => {}, webhookSecret: 'whsec_prueba',
     transport: { async sendMail(message) { messages.push(message); return { accepted: [message.to] }; } },
     ...options,
   });
@@ -110,7 +110,10 @@ test('Prueba 1 / T07: Pago aprobado en sandbox genera comprobante, desglose exac
   // Boletos creados correctamente
   assert.equal(order.tickets.length, 2);
   assert.deepEqual(order.tickets.map(t => t.seat).sort(), ['A1', 'A2']);
-  assert.ok(order.tickets[0].code.includes(order.id));
+  // RN-13 (T09.1): each ticket has its own code, which cannot be guessed from the order.
+  assert.match(order.tickets[0].code, /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/);
+  assert.notEqual(order.tickets[0].code, order.tickets[1].code);
+  assert.ok(!order.tickets[0].code.includes(order.id));
 
   // El apartado pasa a completed y ya no está abierto
   const holdAfter = (await f.request('holds/current', null, buyer, 'GET')).body;
@@ -221,10 +224,9 @@ test('Prueba 3 / T07: Dos clics seguidos con la misma llave de idempotencia gene
     const paymentRows = db.prepare('SELECT COUNT(*) as count FROM payments WHERE idempotency_key=?').get(idempotencyKey);
     assert.equal(paymentRows.count, 1);
 
-    // Y en user_orders solo existe 1 orden
-    const ordersRow = db.prepare('SELECT payload FROM user_orders').all();
-    const allOrders = ordersRow.flatMap(r => JSON.parse(r.payload));
-    assert.equal(allOrders.length, 1);
+    // Y solo existe 1 orden con su único boleto
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM tickets').get().count, 1);
   } finally {
     db.close();
   }
@@ -245,8 +247,9 @@ test('Prueba 4 / T07: Si el usuario cierra la página después de pagar, el webh
   await f.request(`holds/${holdId}/pay`, {}, buyer);
 
   // El usuario cierra la página y se desconecta (no hace petición para guardar orden).
-  // La pasarela de pagos notifica de forma autónoma al webhook del servidor:
-  const webhookRes = await f.request('payments/webhook', {
+  // La pasarela de pagos notifica de forma autónoma al webhook del servidor.
+  // Sin la clave compartida nadie puede marcar un apartado como pagado (T12.5).
+  const webhookBody = {
     event: 'payment.succeeded',
     paymentId: 'pay_webhook_998877',
     holdId,
@@ -254,7 +257,10 @@ test('Prueba 4 / T07: Si el usuario cierra la página después de pagar, el webh
     last4: '4242',
     brand: 'MASTERCARD',
     idempotencyKey: 'ik-webhook-d7',
-  });
+  };
+  assert.equal((await f.request('payments/webhook', webhookBody)).status, 401);
+  assert.equal((await f.request('payments/webhook', webhookBody, '', 'POST', { 'X-Webhook-Secret': 'otra-clave' })).status, 401);
+  const webhookRes = await f.request('payments/webhook', webhookBody, '', 'POST', { 'X-Webhook-Secret': 'whsec_prueba' });
 
   assert.equal(webhookRes.status, 200);
   assert.equal(webhookRes.body.ok, true);

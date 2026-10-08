@@ -9,14 +9,22 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve": "node server/start.js",
-    "test": "node --test server/accounts.test.js server/holds.test.js server/payments.test.js",
-    "demo:datos": "node server/demo-data.js"
+    "test": "node --test server/accounts.test.js server/holds.test.js server/payments.test.js server/tickets.test.js server/postsale.test.js server/reports.test.js server/final.test.js",
+    "demo:datos": "node server/demo-data.js",
+    "start:https": "vite --host 0.0.0.0 --mode https",
+    "prueba:carga": "node scripts/prueba-carga.mjs"
   },
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "vite": "^8.3.2"
   },
   "dependencies": {
-    "nodemailer": "^10.0.14"
+    "jsqr": "^1.4.0",
+    "nodemailer": "^10.0.14",
+    "pdfkit": "^0.20.2",
+    "qrcode": "^1.5.4"
   }
 }

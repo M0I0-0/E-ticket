@@ -21,7 +21,8 @@ const server=createServer((req,res)=>accounts.middleware(req,res,async()=>{
     if(!(await stat(file)).isFile()) throw new Error('Missing');
     res.setHeader('Content-Type',types[extname(file)]||'application/octet-stream');
     res.setHeader('X-Content-Type-Options','nosniff');
-    res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; object-src 'none'; frame-ancestors 'none'");
+    res.setHeader('Content-Security-Policy',"default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'");
+    if(process.env.COOKIE_SECURE==='true') res.setHeader('Strict-Transport-Security','max-age=31536000');
     if(req.method==='HEAD') res.end();
     else createReadStream(file).on('error',()=>res.destroy()).pipe(res);
   } catch {res.statusCode=404;res.end('Página no disponible.');}

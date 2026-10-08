@@ -1,0 +1,228 @@
+{
+  "browser": "Chrome",
+  "results": [
+    {
+      "label": "T12.4 la página de inicio carga en menos de 3 s",
+      "ok": true,
+      "detail": "426 ms"
+    },
+    {
+      "label": "T11.8 la cartelera marca «Agotado» el evento sin lugares",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T11.8 el detalle de un evento agotado no deja comprar",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Mapa: banner de tiempo real activado",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 3: al hacer clic el asiento se aparta en el servidor",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 3: el panel muestra la reserva protegida con su reloj",
+      "ok": true,
+      "detail": "Tus asientos están protegidos mientras completas el proceso.\n\nReserva temporal detectada - 10:00 restantes"
+    },
+    {
+      "label": "Imagen 4: otro comprador ve D1 y B4 «Apartado temporalmente» con candado",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 4: aviso de asientos en proceso de compra con tiempo restante",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 2: «No se pudo apartar B3 · Otro usuario completó la selección primero»",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 2: aviso rojo y selección actualizada",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 2: B3 en rojo y asiento sugerido cerca",
+      "ok": true,
+      "detail": "B2"
+    },
+    {
+      "label": "Ambas reservas expiran a los 10 minutos",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Tras expirar, los asientos anteriores libres aparecen sugeridos",
+      "ok": true,
+      "detail": "Tus asientos anteriores (D1, B4, B3) siguen disponibles. Puedes volver a apartarlos."
+    },
+    {
+      "label": "T12.6 los textos legales se ven antes de pagar",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "El pago confirma la orden y avisa del correo con PDF",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Imagen 1: «Los asientos elegidos anteriormente ya no están disponibles»",
+      "ok": true,
+      "detail": "Los asientos elegidos anteriormente ya no están disponibles. C5 y C6 fueron comprados por otro usuario. Por favor, selecciona nuevos asientos disponibles para continuar."
+    },
+    {
+      "label": "Imagen 1: botón «Seleccionar nuevos asientos» y sugerencia con estrella",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.2 Mis boletos muestra un QR distinto por boleto",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.2 el PDF del boleto se descarga desde Mis boletos",
+      "ok": true,
+      "detail": "{\"type\":\"application/pdf\",\"head\":\"%PDF-\"}"
+    },
+    {
+      "label": "T11.1 el boleto transferido aparece en la otra cuenta con QR nuevo",
+      "ok": true,
+      "detail": "A452-YER0-1SH1-BZ6C-F7Z9 → NFYQ-H5E2-108P-F974-PRWE"
+    },
+    {
+      "label": "T09.4 el personal solo ve sus funciones asignadas",
+      "ok": true,
+      "detail": "Ecos de medianoche · 14 de noviembre de 2026 · 20:00 h | Festival de Luces · 18 de diciembre de 2026 · 20:00 h"
+    },
+    {
+      "label": "T09.6 verde «ACCESO VÁLIDO» (código escrito a mano)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.6 rojo «YA UTILIZADO» con hora y puerta",
+      "ok": true,
+      "detail": "YA UTILIZADO Entró el 8 oct 2026, 4:49 p.m. por Puerta 2. Ecos de medianoche · Preferente · C5 · Ana Demo Prueba Código AQVN-3XVH-50GM-BQW7-XY1D · escrito a mano"
+    },
+    {
+      "label": "T11.2 el QR anterior de un boleto transferido sale «NO VÁLIDO»",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.10 un boleto de otro evento sale «NO VÁLIDO»",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.5 la cámara lee el QR y valida el acceso",
+      "ok": true,
+      "detail": "ACCESO VÁLIDO Bienvenido. Asiento C6 · Preferente. Ecos de medianoche · Preferente · C6 · Beto Demo Prueba Código NFYQ-H5E2-108P-F974-PRWE · cámara"
+    },
+    {
+      "label": "T09.7 el contador muestra cuántos han entrado",
+      "ok": true,
+      "detail": "2 de 2"
+    },
+    {
+      "label": "T10.1 el panel muestra vendidos, ingresos, comisión, monto a liquidar y cortesías (1 por función)",
+      "ok": true,
+      "detail": "Boletos vendidos 5 2 órdenes Ingresos por boletos $2,100.00 Precio de los boletos Comisión de eTicket $210.00 Cargo por servicio Monto a liquidar $2,100.00 Lo que recibe el organizador Disponibles 125 0 apartados ahora Cortesías 2 Asientos bloqueados Asistencia 2 / 5 Escaneados / vendidos Reembolsado $0.00 Total cobrado $2,679.60"
+    },
+    {
+      "label": "T10.2 asistencia real: 2 escaneados de 5",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.9 el organizador revierte un escaneo desde su panel",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T11.3 el organizador solicita la cancelación (queda pendiente)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T11.4 la administración aprueba la cancelación",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T11.5 el reembolso rechazado aparece con orden, monto y motivo",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T11.7 reembolso individual desde el panel",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T10.3 el reporte de ventas muestra filas y totales",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T10.4 el CSV se descarga con las mismas cifras",
+      "ok": true,
+      "detail": "Día,Órdenes,Boletos,Subtotal,Cargo por servicio,IVA,Total cobrado,Reembolsado\r"
+    },
+    {
+      "label": "T10.7 la bitácora lista aprobaciones, cancelaciones, reembolsos y reversión de escaneos",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T09.3 y T10.8 la bandeja muestra los correos enviados con sus PDF",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "Zona general: el resumen muestra 2 accesos con su desglose",
+      "ok": true,
+      "detail": "Ritmo al aire libre ·  · 5 de diciembre de 2026 · 17:00 h · Parque del Mar, Cancún"
+    },
+    {
+      "label": "Zona general: la compra crea 2 boletos con QR",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T12.6 el pie de página enlaza los 3 textos legales",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "label": "T12.4 nada se corta en celular (390 px)",
+      "ok": true,
+      "detail": "sin desbordes"
+    },
+    {
+      "label": "Sin errores de JavaScript en las páginas",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "timings": [
+    {
+      "page": "inicio",
+      "load": 426,
+      "dom": 246
+    }
+  ],
+  "pageErrors": []
+}
