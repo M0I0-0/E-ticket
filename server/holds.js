@@ -14,7 +14,8 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
       event_id TEXT NOT NULL, function_id TEXT NOT NULL, zone TEXT NOT NULL, kind TEXT NOT NULL,
       seats TEXT NOT NULL DEFAULT '[]', quantity INTEGER NOT NULL, status TEXT NOT NULL,
       created INTEGER NOT NULL, expires INTEGER NOT NULL, payment_started INTEGER,
-      closed INTEGER, close_reason TEXT NOT NULL DEFAULT '', order_id TEXT
+      closed INTEGER, close_reason TEXT NOT NULL DEFAULT '', order_id TEXT,
+      payment_attempts INTEGER NOT NULL DEFAULT 0
     );
     CREATE UNIQUE INDEX IF NOT EXISTS holds_one_open ON holds(user_id) WHERE status IN ${OPEN};
     CREATE INDEX IF NOT EXISTS holds_due ON holds(status, expires);
@@ -25,13 +26,24 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     );
     CREATE INDEX IF NOT EXISTS hold_seats_hold ON hold_seats(hold_id);`);
 
+  const holdCols = db.prepare('PRAGMA table_info(holds)').all().map(c => c.name);
+  if (!holdCols.includes('payment_attempts')) {
+    db.exec('ALTER TABLE holds ADD COLUMN payment_attempts INTEGER NOT NULL DEFAULT 0');
+  }
+
   const conflict = (status, message, extra) => Object.assign(failure(status, message), { extra });
   const find = id => db.prepare('SELECT * FROM holds WHERE id=?').get(id);
   const openHold = userId => db.prepare(`SELECT * FROM holds WHERE user_id=? AND status IN ${OPEN}`).get(userId);
   const view = h => {
     if (!h) return null;
     const now = clock();
-    return { id: h.id, eventId: h.event_id, functionId: h.function_id, zone: h.zone, kind: h.kind, seats: JSON.parse(h.seats), quantity: h.quantity, status: h.status, created: h.created, expires: h.expires, paymentStarted: h.payment_started, remainingMs: Math.max(0, h.expires - now), serverNow: now };
+    return {
+      id: h.id, eventId: h.event_id, functionId: h.function_id, zone: h.zone, kind: h.kind,
+      seats: JSON.parse(h.seats), quantity: h.quantity, status: h.status, created: h.created,
+      expires: h.expires, paymentStarted: h.payment_started,
+      paymentAttempts: h.payment_attempts || 0,
+      remainingMs: Math.max(0, h.expires - now), serverNow: now
+    };
   };
   const transaction = work => {
     db.exec('BEGIN IMMEDIATE');
@@ -196,16 +208,22 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     return { hold: view(find(h.id)) };
   }
 
-  // A rejected payment returns the seats to the clock, or frees them if time ran out.
+  // A rejected payment returns the seats to the clock, or frees them if time ran out (max 3 attempts).
   function paymentFailed(user, id) {
     const h = own(user, id);
     if (h.status !== 'paying') return { hold: view(h) };
+    const attempts = (h.payment_attempts || 0) + 1;
+    db.prepare('UPDATE holds SET payment_attempts=? WHERE id=?').run(attempts, h.id);
+    if (attempts >= 3) {
+      close(h.id, 'cancelled', '3 intentos de pago rechazados');
+      return { hold: null, cancelled: true, attempts, maxAttempts: 3 };
+    }
     if (h.expires > clock()) {
       db.prepare("UPDATE holds SET status='active', payment_started=NULL WHERE id=? AND status='paying'").run(h.id);
-      return { hold: view(find(h.id)) };
+      return { hold: view(find(h.id)), attempts, maxAttempts: 3 };
     }
     close(h.id, 'expired', 'pago rechazado sin tiempo');
-    return { hold: null, expired: true };
+    return { hold: null, expired: true, attempts, maxAttempts: 3 };
   }
 
   // Runs inside the orders transaction, so it must not open its own.

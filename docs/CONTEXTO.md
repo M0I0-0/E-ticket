@@ -15,7 +15,8 @@ Tecnología: HTML, CSS y JavaScript sin frameworks, empaquetado con Vite. La API
 | 2026-10-04 | `6f1395a` Initial commit | Moises Casanova | README con el título. |
 | 2026-10-04 | `d8e6359` T03 · Prototipos del visitante y del comprador | Aurora Madera | Toda la base: interfaz completa del comprador y API de cuentas con SQLite. |
 | 2026-10-07 | `55766ba` Cambios Roger | Roger Gonzalez | Verificación por correo, roles, eventos y recintos en el servidor. |
-| 2026-10-07 | sin commit · T08 | tarea de Benjamín | Apartados con reloj en el servidor, abandono y liberación. |
+| 2026-10-07 | `5d9caf4` T08 | Benjamín | Apartados con reloj en el servidor, abandono y liberación. |
+| 2026-10-07 | T07 · Checkout en sandbox | Cristian | Pasarela sandbox, tokenización segura, webhook, idempotencia, 3 rechazos y RN-12. |
 
 ### T03 · la base
 
@@ -35,12 +36,25 @@ Tecnología: HTML, CSS y JavaScript sin frameworks, empaquetado con Vite. La API
 - Escape de HTML (`esc()`) en la interfaz.
 - 6 pruebas.
 
-### T08 · temporizador, abandono y liberación (sin commit)
+### T08 · temporizador, abandono y liberación
 
 - Nuevo `server/holds.js` con las tablas `holds` y `hold_seats`, y las rutas `/api/holds`, `/api/availability` y `/api/admin/holds`.
 - Interfaz: reloj sincronizado con el servidor, pantalla «Tienes una compra en curso», mapa de asientos que se actualiza solo, quitar lugares, estado «En pago» y conteo de compras expiradas en el panel del administrador.
 - Correcciones a lo existente: cada venta se sumaba dos veces en `event_sales`; las consultas automáticas habrían mantenido viva la sesión; las cuentas de taquilla podían comprar.
 - `npm run demo:datos`, la variable `HOLD_MINUTES` y 11 pruebas nuevas.
+
+### T07 · Checkout y pago con tarjeta en sandbox (Cristian)
+
+- T07.1 (RN-10): Resumen con desglose detallado (precio por zona, 10 % de cargo por servicio, IVA 16 % y total coincidente con sandbox al centavo) junto al reloj de reserva activo.
+- T07.2: Términos y política de reembolsos obligatoria; el botón Pagar permanece inactivo hasta marcar la casilla.
+- T07.3: Integración sandbox con tokenización en cliente (`sandboxTokenize`). El número de tarjeta completo y CVV jamás viajan ni se guardan en el servidor.
+- T07.4 (RN-07): Estado «En pago» congela el apartado hasta 5 minutos mientras responde la pasarela, evitando que el sweeper libere los asientos.
+- T07.5: Confirmación autónoma por webhook (`POST /api/payments/webhook`). Si el comprador cierra el navegador tras pagar, el servidor emite la orden y los boletos de forma independiente.
+- T07.6: Prevención de doble cobro mediante desactivación inmediata del botón y llaves de idempotencia (`idempotency_key` en tabla `payments`).
+- T07.7: Pagos rechazados con hasta 3 intentos conservando asientos. Al tercer rechazo, la compra se cancela automáticamente y los asientos se liberan en el servidor.
+- T07.8: Comprobante con número de orden, desglose detallado, fecha, últimos 4 dígitos (`•••• 4242`) y código de autorización de la pasarela.
+- T07.9 (RN-12): Registro de pagos aprobados sin boletos en `orphan_payments` y panel de resolución administrativa en `roles-ui.js`.
+- T07.10: 5 pruebas automatizadas en `server/payments.test.js` (22 pruebas en total en la suite).
 
 ## Cómo correrlo
 
@@ -69,9 +83,10 @@ Sin SMTP configurado en `.env` no se pueden crear cuentas nuevas, porque el regi
 | `assets/` | Logo y 6 QR de demostración. |
 | `server/accounts.js` | `createAccounts(env, options)`: crea y migra la base de datos y atiende todas las rutas `/api`. |
 | `server/holds.js` | `createHolds(db, opciones)`: apartados, disponibilidad, pago y liberación. |
+| `server/payments.js` | `createPayments(db, holds, opciones)`: cobros en sandbox, tokenización, webhook, idempotencia, 3 rechazos y pagos huérfanos (RN-12). |
 | `server/start.js` | Servidor de producción: sirve `dist/` y la API con cabecera CSP. |
 | `server/demo-data.js` | Script de cuentas de demostración. |
-| `server/accounts.test.js`, `server/holds.test.js` | Pruebas con `node:test` (6 y 11). |
+| `server/accounts.test.js`, `server/holds.test.js`, `server/payments.test.js` | Pruebas con `node:test` (6, 11 y 5; 22 en total). |
 | `vite.config.js` | Monta la API dentro de Vite (desarrollo y vista previa), copia `assets/` al compilar y bloquea el acceso a `data/`, `server/` y `.env`. |
 | `data/eticket.sqlite` | Base de datos local (con sus archivos `-wal` y `-shm`). Está ignorada en Git porque contiene datos privados. |
 
@@ -167,6 +182,9 @@ Todas las respuestas son JSON. Los errores llegan como `{ "error": "mensaje" }`;
 | `PUT /api/holds/:id` | Dueño | Cambiar lugares o cantidad; si queda vacío, se cancela. |
 | `POST /api/holds/:id/cancel` | Dueño | Cancelar y liberar. |
 | `POST /api/holds/:id/pay`, `…/payment-failed` | Dueño | Pasar a «En pago»; avisar que el pago se rechazó. |
+| `POST /api/payments/charge` | Sesión, menos taquilla | Procesar pago seguro en sandbox (tokenizado, sin datos sensibles). |
+| `POST /api/payments/webhook` | Pasarela / Sandbox | Confirmación autónoma de cobros aprobados para emisión de boletos. |
+| `GET /api/admin/unresolved-payments`, `POST …/:id/resolve` | Administrador | Listar y resolver cobros aprobados sin boletos (RN-12). |
 | `GET /api/orders`, `PUT /api/orders` | Sesión | Compras propias. `PUT` guarda la lista completa y confirma las órdenes nuevas que traen `holdId`. |
 | `POST /api/box-office/check` | Taquilla | Validar un código de boleto (una sola vez). |
 
@@ -186,8 +204,10 @@ Las tablas y columnas se crean solas al arrancar (`CREATE TABLE IF NOT EXISTS` y
 | `event_sales` | Boletos vendidos por zona, sumando todas las funciones. |
 | `event_seats` | Se crea, pero ningún código la usa. |
 | `ticket_checkins` | Boletos ya validados en taquilla. |
-| `holds` | Apartados: evento, función, zona, lugares, estado, creación, vencimiento, inicio del pago, cierre y motivo. |
+| `holds` | Apartados: evento, función, zona, lugares, estado, creación, vencimiento, inicio del pago, cierre, motivo e intentos de pago. |
 | `hold_seats` | Un candado por asiento apartado (único por evento, función, zona y asiento). Se borra al cancelar o expirar. |
+| `payments` | Transacciones de pasarela sandbox: id de cobro, llave de idempotencia, hold, usuario, monto, estado, last4 y marca. |
+| `orphan_payments` | Pagos aprobados sin boletos (RN-12): reporte para resolución y reembolso por el administrador. |
 
 ## Configuración (`.env`)
 
@@ -201,19 +221,19 @@ Las tablas y columnas se crean solas al arrancar (`CREATE TABLE IF NOT EXISTS` y
 
 ## Pruebas
 
-`npm test` corre 17 pruebas con `node:test`; cada una usa su propia base temporal.
+`npm test` corre 22 pruebas con `node:test`; cada una usa su propia base temporal.
 
 - `accounts.test.js` (6): registro con verificación, aislamiento de compras entre cuentas, validaciones del registro, permisos de roles y publicación de eventos, recuperación y bloqueo, y reglas de funciones, zonas, asientos y ventana de venta.
 - `holds.test.js` (11): reloj de 10 minutos sin extensión, reanudar en otro dispositivo, una compra por cuenta, quitar y cancelar, expiración y conteo del administrador, tarea programada, pago que cruza el cero, rechazo antes y después del cero, tope de 5 minutos, zona general en eventos publicados, y compras sin apartado, taquilla y sesión.
+- `payments.test.js` (5): pago aprobado en sandbox con comprobante y desglose exacto (T07.1, T07.3, T07.8), 3 pagos rechazados con liberación automática al tercer rechazo (T07.7), sin doble cobro con llave de idempotencia (T07.6), confirmación autónoma por webhook al cerrar página (T07.5) y registro de pagos sin boletos RN-12 para resolución administrativa (T07.9).
 
-Las pruebas de apartados reciben un reloj falso (`options.clock`) para adelantar el tiempo sin esperar 10 minutos. El 7 de octubre también se revisó el flujo completo en Chrome con cuatro sesiones separadas (32 comprobaciones correctas); ese script no está en el repositorio.
+Las pruebas de apartados reciben un reloj falso (`options.clock`) para adelantar el tiempo sin esperar 10 minutos.
 
 ## Pendientes y deuda técnica
 
 Pendientes del equipo:
 
-- Hacer commit de T08. `package-lock.json` también aparece modificado, pero solo por un `npm install` local; no conviene incluirlo.
-- T08.8: prueba conjunta con Cristian (T07, pago). Hay que confirmar que «En pago» no expira por el reloj, el tope de 5 minutos y que su pantalla de pago llama a `POST /api/holds/:id/pay` antes de cobrar y manda `holdId` al confirmar.
+- T07 y T08 completados e integrados.
 - T08.10: ensayar la demo completa con el equipo.
 
 Deuda técnica conocida:

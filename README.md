@@ -76,11 +76,34 @@ tampoco lo extiende.
 - Un apartado «En pago» no se libera al llegar a cero. Si el pago se rechaza
   despues del cero, se libera; si no hay respuesta en 5 minutos, tambien.
 
-Rutas para el pago (T07): `POST /api/holds/:id/pay` al iniciar el cobro,
-`POST /api/holds/:id/payment-failed` si se rechaza y `PUT /api/orders` con
-`holdId` en la orden nueva para confirmarla. Las consultas periodicas envian
-`X-Eticket-Background: 1` para no alargar la sesion por inactividad.
-`HOLD_MINUTES` en `.env` acorta el apartado solo para ensayos.
+## Checkout y pago con tarjeta en sandbox (T07)
+
+El flujo de pago conecta con la pasarela de pagos en modo sandbox, asegurando
+que la pasarela sea la fuente de verdad y cobrando exactamente una vez:
+
+- **Desglose completo y reloj (T07.1 / RN-10):** Precio por zona, 10 % de cargo por servicio,
+  16 % de IVA y total coincidente al centavo con el cobro de la pasarela, con el
+  temporizador visible.
+- **Términos y reembolsos (T07.2):** Casilla obligatoria de aceptación de términos
+  y política de reembolsos. El botón Pagar permanece inactivo hasta que se marca.
+- **Formulario seguro y tokenización (T07.3):** Los datos de tarjeta se tokenizan
+  en el navegador (`sandboxTokenize`). El número completo y el CVV nunca llegan
+  ni se guardan en el servidor.
+- **Estado «En pago» congelado (T07.4 / RN-07):** El apartado se congela hasta por
+  5 minutos mientras la pasarela responde, evitando que la tarea periódica lo libere.
+- **Confirmación por webhook (T07.5):** `POST /api/payments/webhook` emite los
+  boletos y guarda la orden en el servidor; si el comprador cierra el navegador
+  inmediatamente tras pagar, sus boletos quedan guardados en su cuenta.
+- **Sin doble cobro (T07.6):** Desactivación instantánea del botón al primer clic y
+  llave única de idempotencia (`idempotency_key`) por orden.
+- **Rechazos controlados (T07.7):** Hasta 3 intentos conservando los asientos. Al
+  tercer rechazo, la compra se cancela automáticamente y las localidades se liberan.
+- **Orden y comprobante (T07.8):** Comprobante emitido con número de orden, desglose,
+  fecha, últimos 4 dígitos (`•••• 4242`) y código de autorización.
+- **Pagos sin boletos (T07.9 / RN-12):** Cobros aprobados que no pudieron generar
+  boletos se registran en `orphan_payments` para su resolución manual por el administrador.
+- **Rutas de pago:** `POST /api/payments/charge`, `POST /api/payments/webhook`,
+  `GET /api/admin/unresolved-payments` y `POST /api/admin/unresolved-payments/:id/resolve`.
 
 ## Roles y administracion
 

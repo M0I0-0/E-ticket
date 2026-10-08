@@ -6,6 +6,7 @@ import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
 import { createHolds } from './holds.js';
+import { createPayments } from './payments.js';
 
 const derive = promisify(scrypt);
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -72,6 +73,7 @@ export function createAccounts(env = {}, options = {}) {
   const failure = (status, message) => Object.assign(new Error(message), { status });
   const holdMinutes = Number(env.HOLD_MINUTES);
   const holds = createHolds(db, { failure, clock: options.clock, holdMs: options.holdMs || (holdMinutes > 0 ? holdMinutes * 60000 : 600000), paymentMs: options.paymentMs, log: options.log });
+  const payments = createPayments(db, holds, { clock: options.clock, log: options.log, failure });
   const sweeper = setInterval(() => { try { holds.sweep(); } catch (error) { console.error('Error al liberar apartados:', error.code || error.name); } }, options.sweepMs || 60000);
   sweeper.unref?.();
   const cookie = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('eticket_session='))?.slice(16) || '';
@@ -128,6 +130,7 @@ export function createAccounts(env = {}, options = {}) {
       }
       if (req.method === 'GET' && path === '/api/admin/users') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,{users:db.prepare('SELECT id,email,name,role FROM users ORDER BY name').all()}); }
       if (req.method === 'GET' && path === '/api/admin/holds') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,holds.adminSummary()); }
+      if (req.method === 'GET' && path === '/api/admin/unresolved-payments') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,{payments:payments.getUnresolvedPayments()}); }
       if (req.method === 'GET' && path === '/api/holds/current') { if(!activeUser)throw failure(401,'Inicia sesión para continuar tu compra.');return reply(200,holds.current(activeUser)); }
       if (req.method === 'GET' && path === '/api/availability') return reply(200,holds.availability(activeUser,new URL(req.url,'http://localhost').searchParams));
       for await (const chunk of req) {
@@ -148,6 +151,21 @@ export function createAccounts(env = {}, options = {}) {
         if (req.method === 'POST' && action === 'pay') return reply(200, holds.pay(activeUser, id));
         if (req.method === 'POST' && action === 'payment-failed') return reply(200, holds.paymentFailed(activeUser, id));
         throw failure(404, 'Ruta no disponible.');
+      }
+      if (path === '/api/payments/charge' && req.method === 'POST') {
+        if (!activeUser) throw failure(401, 'Inicia sesión para pagar.');
+        if (activeUser.role === 'taquilla') throw failure(403, 'Las cuentas de taquilla no pueden comprar boletos.');
+        const result = payments.charge(activeUser, data);
+        return reply(result.ok ? 200 : (result.cancelled ? 400 : 402), result);
+      }
+      if (path === '/api/payments/webhook' && req.method === 'POST') {
+        const result = payments.webhook(data);
+        return reply(200, result);
+      }
+      if (path.startsWith('/api/admin/unresolved-payments/') && path.endsWith('/resolve') && req.method === 'POST') {
+        admin();
+        const id = path.split('/')[4];
+        return reply(200, payments.resolveOrphanPayment(id, data?.notes));
       }
       if (path === '/api/admin/users' && req.method === 'PUT') { admin();if(!['taquilla','comprador'].includes(data.role))throw failure(400,'Rol no permitido.');db.prepare('UPDATE users SET role=? WHERE id=?').run(data.role,String(data.userId));return reply(200,{ok:true}); }
       if (path === '/api/box-office/check' && req.method === 'POST') { if(!activeUser||activeUser.role!=='taquilla')throw failure(403,'Acceso reservado a taquilla.');const code=String(data.code||'').trim();if(!code)throw failure(400,'Escribe el código del boleto.');for(const row of db.prepare('SELECT user_id,payload FROM user_orders').all()){const order=JSON.parse(row.payload).find(o=>o.tickets?.some(t=>t.code===code));const ticket=order?.tickets.find(t=>t.code===code);if(!ticket)continue;if(db.prepare('SELECT code FROM ticket_checkins WHERE code=?').get(code))throw failure(409,'Este boleto ya fue validado.');db.prepare('INSERT INTO ticket_checkins VALUES(?,?,?)').run(code,activeUser.id,now);return reply(200,{valid:true,eventId:order.eventId,owner:ticket.owner});}throw failure(404,'No encontramos ese boleto.'); }

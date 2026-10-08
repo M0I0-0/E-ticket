@@ -9,7 +9,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve": "node server/start.js",
-    "test": "node --test server/accounts.test.js server/holds.test.js",
+    "test": "node --test server/accounts.test.js server/holds.test.js server/payments.test.js",
     "demo:datos": "node server/demo-data.js"
   },
   "engines": { "node": ">=24" },
