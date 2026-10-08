@@ -1,8 +1,10 @@
 const $=selector=>document.querySelector(selector);
-export async function accountApi(path,data,method='POST'){
-  const response=await fetch('/api/'+path,{method,credentials:'same-origin',...(method==='GET'?{}:{headers:{'Content-Type':'application/json'},body:JSON.stringify(data||{})})});
+// background: polling that must not count as user activity for the session timeout.
+export async function accountApi(path,data,method='POST',background=false){
+  const headers={...(method==='GET'?{}:{'Content-Type':'application/json'}),...(background?{'X-Eticket-Background':'1'}:{})};
+  const response=await fetch('/api/'+path,{method,credentials:'same-origin',headers,...(method==='GET'?{}:{body:JSON.stringify(data||{})})});
   let result;try{result=await response.json()}catch{throw new Error('No se pudo conectar con el servidor. Inicia el proyecto con npm start.')}
-  if(!response.ok)throw new Error(result.error||'No se pudo completar la operación.');return result;
+  if(!response.ok)throw Object.assign(new Error(result.error||'No se pudo completar la operación.'),{status:response.status,data:result});return result;
 }
 export function renderAuth(mode,{app,back,go,toast,useAccount,completeAuth}){
   if(!['login','registro','verificacion','recuperar','restablecer'].includes(mode)){go('login');return;}

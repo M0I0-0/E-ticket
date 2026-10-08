@@ -547,6 +547,49 @@ textarea {
   text-decoration: underline;
   font-size: 13px;
 }
+#timerbar a {
+  margin-left: 18px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.hold-seat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-left: 10px;
+}
+.link-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--light);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: underline;
+}
+.stat {
+  font-size: 30px;
+  color: var(--light);
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.data-table th,
+.data-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid #3a3a4c;
+  vertical-align: top;
+}
+.data-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
 .ticket {
   display: grid;
   grid-template-columns: 1fr 150px;

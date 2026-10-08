@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import nodemailer from 'nodemailer';
+import { createHolds } from './holds.js';
 
 const derive = promisify(scrypt);
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -69,6 +70,10 @@ export function createAccounts(env = {}, options = {}) {
   }
   const limits = new Map();
   const failure = (status, message) => Object.assign(new Error(message), { status });
+  const holdMinutes = Number(env.HOLD_MINUTES);
+  const holds = createHolds(db, { failure, clock: options.clock, holdMs: options.holdMs || (holdMinutes > 0 ? holdMinutes * 60000 : 600000), paymentMs: options.paymentMs, log: options.log });
+  const sweeper = setInterval(() => { try { holds.sweep(); } catch (error) { console.error('Error al liberar apartados:', error.code || error.name); } }, options.sweepMs || 60000);
+  sweeper.unref?.();
   const cookie = req => (req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.startsWith('eticket_session='))?.slice(16) || '';
   const sessionUser = req => db.prepare(`SELECT u.* FROM users u JOIN sessions s ON u.id=s.user_id
     WHERE s.token_hash=? AND s.expires>? AND u.verified=1`).get(hash(cookie(req)), Date.now());
@@ -92,8 +97,10 @@ export function createAccounts(env = {}, options = {}) {
       const now = Date.now();
       db.prepare('DELETE FROM sessions WHERE expires<=?').run(now);
       db.prepare('DELETE FROM challenges WHERE expires<=?').run(now);
+      holds.sweep();
       const activeUser = sessionUser(req);
-      if (activeUser) db.prepare('UPDATE sessions SET expires=? WHERE token_hash=?').run(now + 1800000, hash(cookie(req)));
+      // Background polling (purchase clock, seat map) must not keep an idle session alive.
+      if (activeUser && req.headers['x-eticket-background'] !== '1') db.prepare('UPDATE sessions SET expires=? WHERE token_hash=?').run(now + 1800000, hash(cookie(req)));
       if (req.method === 'GET' && path === '/api/auth/me') return reply(200, { user: sessionUser(req) ? publicUser(sessionUser(req)) : null });
       if (req.method === 'GET' && path === '/api/orders') {
         const user = activeUser;
@@ -120,6 +127,9 @@ export function createAccounts(env = {}, options = {}) {
         return reply(200,{events:rows.map(e=>{const payload=JSON.parse(e.payload),sales=Object.fromEntries(db.prepare('SELECT zone,sold FROM event_sales WHERE event_id=?').all(e.id).map(x=>[x.zone,x.sold])),sessionSales=db.prepare('SELECT function_id,zone,sold FROM event_function_sales WHERE event_id=?').all(e.id),sessionSeats=db.prepare('SELECT function_id,zone,seat FROM event_function_seats WHERE event_id=?').all(e.id);return{...payload,zones:(payload.zones||[]).map(z=>({...z,sold:sales[z.name]||0,salesByFunction:Object.fromEntries(sessionSales.filter(s=>s.zone===z.name).map(s=>[s.function_id,s.sold])),occupiedByFunction:Object.fromEntries((payload.functions||[{id:'1'}]).map(f=>[f.id,sessionSeats.filter(s=>s.zone===z.name&&s.function_id===String(f.id)).map(s=>s.seat)]))})),id:e.id,status:e.status,reviewReason:e.review_reason,ownerId:e.owner_id,sold:Object.values(sales).reduce((a,b)=>a+b,0)}})});
       }
       if (req.method === 'GET' && path === '/api/admin/users') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,{users:db.prepare('SELECT id,email,name,role FROM users ORDER BY name').all()}); }
+      if (req.method === 'GET' && path === '/api/admin/holds') { if(!activeUser||activeUser.role!=='administrador')throw failure(403,'Acceso reservado al administrador.');return reply(200,holds.adminSummary()); }
+      if (req.method === 'GET' && path === '/api/holds/current') { if(!activeUser)throw failure(401,'Inicia sesión para continuar tu compra.');return reply(200,holds.current(activeUser)); }
+      if (req.method === 'GET' && path === '/api/availability') return reply(200,holds.availability(activeUser,new URL(req.url,'http://localhost').searchParams));
       for await (const chunk of req) {
         text += chunk;
         if (Buffer.byteLength(text) > (path === '/api/orders' ? 512000 : 8192)) throw failure(413, 'Solicitud demasiado grande.');
@@ -128,6 +138,17 @@ export function createAccounts(env = {}, options = {}) {
       try { data = JSON.parse(text); } catch { throw failure(400, 'Solicitud inválida.'); }
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw failure(400, 'Solicitud inválida.');
       const admin = () => { if (!activeUser || activeUser.role !== 'administrador') throw failure(403, 'Acceso reservado al administrador.'); };
+      if (path === '/api/holds' || path.startsWith('/api/holds/')) {
+        if (!activeUser) throw failure(401, 'Inicia sesión para apartar tus lugares.');
+        if (activeUser.role === 'taquilla') throw failure(403, 'Las cuentas de taquilla no pueden comprar boletos.');
+        const [, , , id, action] = path.split('/');
+        if (req.method === 'POST' && !id) return reply(201, { hold: holds.create(activeUser, data) });
+        if (req.method === 'PUT' && id && !action) return reply(200, holds.update(activeUser, id, data));
+        if (req.method === 'POST' && action === 'cancel') return reply(200, holds.cancel(activeUser, id));
+        if (req.method === 'POST' && action === 'pay') return reply(200, holds.pay(activeUser, id));
+        if (req.method === 'POST' && action === 'payment-failed') return reply(200, holds.paymentFailed(activeUser, id));
+        throw failure(404, 'Ruta no disponible.');
+      }
       if (path === '/api/admin/users' && req.method === 'PUT') { admin();if(!['taquilla','comprador'].includes(data.role))throw failure(400,'Rol no permitido.');db.prepare('UPDATE users SET role=? WHERE id=?').run(data.role,String(data.userId));return reply(200,{ok:true}); }
       if (path === '/api/box-office/check' && req.method === 'POST') { if(!activeUser||activeUser.role!=='taquilla')throw failure(403,'Acceso reservado a taquilla.');const code=String(data.code||'').trim();if(!code)throw failure(400,'Escribe el código del boleto.');for(const row of db.prepare('SELECT user_id,payload FROM user_orders').all()){const order=JSON.parse(row.payload).find(o=>o.tickets?.some(t=>t.code===code));const ticket=order?.tickets.find(t=>t.code===code);if(!ticket)continue;if(db.prepare('SELECT code FROM ticket_checkins WHERE code=?').get(code))throw failure(409,'Este boleto ya fue validado.');db.prepare('INSERT INTO ticket_checkins VALUES(?,?,?)').run(code,activeUser.id,now);return reply(200,{valid:true,eventId:order.eventId,owner:ticket.owner});}throw failure(404,'No encontramos ese boleto.'); }
       const deliverCode = async (user,purpose) => {
@@ -171,7 +192,7 @@ export function createAccounts(env = {}, options = {}) {
         if (!user) throw failure(401, 'Tu sesión venció. Vuelve a iniciar sesión.');
         // This stores the existing simulated purchases, never proof of payment.
         if (!Array.isArray(data.orders) || data.orders.length > 500 || data.orders.some(o =>
-          !o || typeof o.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(o.id) || !([1,2,3,4,5].includes(o.eventId) || db.prepare("SELECT id FROM events WHERE id=? AND status='published'").get(String(o.eventId))) || !Number.isFinite(o.total) || o.total < 0 ||
+          !o || typeof o.id !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(o.id) || (o.holdId !== undefined && (typeof o.holdId !== 'string' || !/^[a-f0-9]{32}$/.test(o.holdId))) || !([1,2,3,4,5].includes(o.eventId) || db.prepare("SELECT id FROM events WHERE id=? AND status='published'").get(String(o.eventId))) || !Number.isFinite(o.total) || o.total < 0 ||
           typeof o.time !== 'string' || !Number.isFinite(Date.parse(o.time)) || !Array.isArray(o.tickets) || o.tickets.length > 6 || o.tickets.some(t =>
             !t || typeof t.seat !== 'string' || !/^(?:[A-Z][1-3]?\d{1,3}|Acceso [1-6])$/.test(t.seat) || typeof t.owner !== 'string' || t.owner.length > 80 || typeof t.code !== 'string' || !/^[a-zA-Z0-9-]{1,80}$/.test(t.code) || typeof t.transferred !== 'boolean'))
         ) throw failure(400, 'Datos de compra inválidos.');
@@ -179,6 +200,7 @@ export function createAccounts(env = {}, options = {}) {
         try {
           const previous=JSON.parse(db.prepare('SELECT payload FROM user_orders WHERE user_id=?').get(user.id)?.payload||'[]'),newIds=new Set(previous.map(o=>o.id));
           for(const order of data.orders.filter(o=>!newIds.has(o.id))){
+            if(order.holdId){const held=holds.completeForOrder(user,order);order.zone=held.zone;order.functionId=held.function_id;}else holds.guardLegacy(user,order);
             const event=db.prepare("SELECT * FROM events WHERE id=? AND status='published'").get(String(order.eventId));if(!event)continue;
             const payload=JSON.parse(event.payload),zone=payload.zones?.find(z=>z.name===order.zone)||payload.zones?.[0];if(!zone)continue;
             if(payload.saleStart&&Date.now()<Date.parse(payload.saleStart))throw failure(409,'La venta de este evento todavía no inicia.');
@@ -191,7 +213,6 @@ export function createAccounts(env = {}, options = {}) {
             if(sold+order.tickets.length>Number(zone.capacity))throw failure(409,'La función y zona ya no cuentan con suficientes lugares disponibles.');
             if(zone.type==='seat')for(const ticket of order.tickets){if(zone.seats?.length&&!zone.seats.includes(ticket.seat))throw failure(409,`El asiento ${ticket.seat} no pertenece a la zona.`);try{db.prepare('INSERT INTO event_function_seats(event_id,function_id,zone,seat,order_id) VALUES(?,?,?,?,?)').run(event.id,fnId,zone.name,ticket.seat,order.id);}catch{throw failure(409,`El asiento ${ticket.seat} ya no está disponible para esta función.`);}}
             db.prepare('INSERT INTO event_function_sales(event_id,function_id,zone,sold) VALUES(?,?,?,?) ON CONFLICT(event_id,function_id,zone) DO UPDATE SET sold=sold+excluded.sold').run(event.id,fnId,zone.name,order.tickets.length);
-            db.prepare('INSERT INTO event_sales(event_id,zone,sold) VALUES(?,?,?) ON CONFLICT(event_id,zone) DO UPDATE SET sold=sold+excluded.sold').run(event.id,zone.name,order.tickets.length);
             db.prepare('INSERT INTO event_sales(event_id,zone,sold) VALUES(?,?,?) ON CONFLICT(event_id,zone) DO UPDATE SET sold=sold+excluded.sold').run(event.id,zone.name,order.tickets.length);
           }
           db.prepare('INSERT INTO user_orders (user_id,payload) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET payload=excluded.payload').run(user.id,JSON.stringify(data.orders));
@@ -247,8 +268,8 @@ export function createAccounts(env = {}, options = {}) {
       throw failure(404, 'Ruta no disponible.');
     } catch (error) {
       if (!error.status) console.error('Error de cuentas:', error.code || error.name);
-      reply(error.status || 500, { error: error.status ? error.message : 'No se pudo completar la operación. Inténtalo de nuevo.' });
+      reply(error.status || 500, { error: error.status ? error.message : 'No se pudo completar la operación. Inténtalo de nuevo.', ...(error.status && error.extra) });
     }
   };
-  return { middleware, close: () => db.close() };
+  return { middleware, close: () => { clearInterval(sweeper); db.close(); } };
 }

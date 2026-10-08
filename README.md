@@ -3,6 +3,9 @@
 Aplicacion HTML, CSS y JavaScript con Vite y una API Node.js para cuentas reales.
 Requiere Node.js 24 o superior.
 
+El estado del proyecto, su arquitectura, la API y la historia de cambios estan
+en `docs/CONTEXTO.md`.
+
 ## Ejecutar
 
 Desde E-ticket: `npm install`, seguido de `npm start`.
@@ -12,7 +15,9 @@ Los comandos tambien funcionan desde la carpeta superior AgileKanban2.
 - `npm run build`: genera la interfaz en dist/.
 - `npm run preview`: revisa la compilacion con su API.
 - `npm run serve`: sirve dist/ y la API en el puerto 3000; requiere compilar primero.
-- `npm test`: pruebas de cuentas, sesiones, verificacion, recuperacion y aislamiento.
+- `npm test`: pruebas de cuentas, sesiones, verificacion, recuperacion, aislamiento y apartados.
+- `npm run demo:datos`: crea cuentas de demostracion verificadas sin SMTP; con
+  `-- --limpiar` borra tambien sus compras y apartados.
 
 ## Registro y acceso
 
@@ -51,8 +56,31 @@ El registro, la verificacion por correo, el inicio de sesion y la recuperacion
 requieren SMTP configurado. La cartelera,
 los cobros, las transferencias y los QR siguen siendo una simulacion: los datos
 de compras guardados no constituyen comprobantes de pago ni entradas reales.
-Para vender boletos faltan un proveedor de pagos, inventario y reservas en el
-servidor y validacion de entradas.
+Los apartados con reloj ya se guardan en el servidor; para vender boletos reales
+faltan un proveedor de pagos y validacion de entradas.
+
+## Apartados y reloj de compra (T08)
+
+Al pasar al resumen, el servidor aparta los lugares durante 10 minutos (RN-03)
+y guarda la hora exacta de vencimiento en la tabla `holds`. El navegador recibe
+el tiempo restante calculado con la hora del servidor, asi que recargar, abrir
+otra pestaña o cambiar de dispositivo no reinicia el reloj. Cambiar los lugares
+tampoco lo extiende.
+
+- Cada cuenta tiene como maximo una compra abierta; quien vuelve ve
+  «Tienes una compra en curso» (RN-04, RN-06, K-09).
+- Quitar un lugar o cancelar lo libera al instante; el mapa de otros
+  navegadores se actualiza cada 5 segundos (RN-05).
+- Una tarea cada minuto libera los apartados vencidos y los registra como
+  expirados; el administrador ve el conteo en su panel (K-10, T08.7).
+- Un apartado «En pago» no se libera al llegar a cero. Si el pago se rechaza
+  despues del cero, se libera; si no hay respuesta en 5 minutos, tambien.
+
+Rutas para el pago (T07): `POST /api/holds/:id/pay` al iniciar el cobro,
+`POST /api/holds/:id/payment-failed` si se rechaza y `PUT /api/orders` con
+`holdId` en la orden nueva para confirmarla. Las consultas periodicas envian
+`X-Eticket-Background: 1` para no alargar la sesion por inactividad.
+`HOLD_MINUTES` en `.env` acorta el apartado solo para ensayos.
 
 ## Roles y administracion
 
