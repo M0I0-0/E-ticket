@@ -5,10 +5,13 @@ const csvCell = value => {
   const text = value == null ? '' : String(value);
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
+// Excel runs a cell that starts with = + - or @ as a formula; a leading ' keeps names and reasons as text.
+const csvText = text => /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
 const csvValue = (value, type) => {
   if (value == null || value === '') return '';
   if (type === 'money') return Number(value).toFixed(2);
   if (type === 'datetime') { const d = new Date(value); return `${d.toLocaleDateString('sv-SE')} ${d.toTimeString().slice(0, 5)}`; }
+  if (type === 'text') return csvText(String(value));
   return value;
 };
 // T10.4: UTF-8 with BOM and plain numbers, so Excel opens it with the same figures as the screen.

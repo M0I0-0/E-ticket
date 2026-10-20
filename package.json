@@ -9,8 +9,9 @@
     "build": "vite build",
     "preview": "vite preview",
     "serve": "node server/start.js",
-    "test": "node --test server/accounts.test.js server/holds.test.js server/payments.test.js server/tickets.test.js server/postsale.test.js server/reports.test.js server/final.test.js",
+    "test": "node --test server/accounts.test.js server/holds.test.js server/payments.test.js server/tickets.test.js server/postsale.test.js server/reports.test.js server/final.test.js server/qa.test.js",
     "demo:datos": "node server/demo-data.js",
+    "correo:prueba": "node scripts/probar-correo.mjs",
     "start:https": "vite --host 0.0.0.0 --mode https",
     "prueba:carga": "node scripts/prueba-carga.mjs"
   },

@@ -9,11 +9,15 @@ import { createAccounts } from './accounts.js';
 export const CODE = /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){4}$/;
 export const MINUTE = 60000, HOUR = 3600000, DAY = 86400000;
 
+// A fixed "today" before every event the tests buy (sample events start on 2026-11-14),
+// so the suite keeps passing after those dates.
+export const TODAY = new Date('2026-10-15T12:00:00').getTime();
+
 // A throwaway server with a fake mail transport and a clock the test can move.
 export async function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eticket-e3-'));
   const filename = join(dir, 'e3.sqlite');
-  const messages = [], clock = { now: Date.now() };
+  const messages = [], clock = { now: TODAY };
   const app = createAccounts({ ADMIN_EMAIL: 'admin@example.com' }, {
     filename, clock: () => clock.now, log: () => {}, webhookSecret: 'whsec_test',
     transport: { async sendMail(message) { messages.push(message); return { accepted: [message.to] }; } },

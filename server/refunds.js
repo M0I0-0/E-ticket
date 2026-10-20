@@ -150,7 +150,9 @@ export function createRefunds(db, { failure, clock = Date.now, catalog, tickets,
     const c = db.prepare('SELECT * FROM cancellations WHERE id=?').get(String(cancelId));
     if (!c) throw failure(404, 'Solicitud no encontrada.');
     if (c.status !== 'requested') throw failure(409, 'Esta solicitud ya fue resuelta.');
-    const ev = catalog.event(c.event_id), organizer = user(c.requested_by), now = clock();
+    // The event owner hears the decision, also when the administrator cancelled it directly.
+    const ev = catalog.event(c.event_id), organizer = (ev?.ownerId && user(ev.ownerId)) || user(c.requested_by), now = clock();
+    const byAdmin = user(c.requested_by)?.role === 'administrador';
     const decisionReason = String(data?.reason || '').trim().slice(0, 500);
     if (!data?.approve) {
       if (!decisionReason) throw failure(400, 'Escribe el motivo del rechazo.');
@@ -183,8 +185,21 @@ export function createRefunds(db, { failure, clock = Date.now, catalog, tickets,
       const owner = user(ownerId);
       mailer.send({ to: owner.email, kind: 'cancelacion', subject: `Se canceló ${ev.name}`, text: [`Hola, ${owner.name}:`, '', `${ev.name} fue cancelado. Los QR de tus boletos ya no son válidos.`, 'El reembolso se hace a quien compró los boletos.', '', 'eTicket'].join('\n') });
     }
-    mailer.send({ to: organizer.email, kind: 'cancelacion', subject: `Se aprobó la cancelación de ${ev.name}`, text: [`Hola, ${organizer.name}:`, '', `La administración aprobó cancelar ${ev.name}.`, `Órdenes reembolsadas: ${results.filter(r => r.ok).length} de ${results.length}.`, '', 'eTicket'].join('\n') });
+    mailer.send({ to: organizer.email, kind: 'cancelacion', subject: byAdmin ? `La administración canceló ${ev.name}` : `Se aprobó la cancelación de ${ev.name}`, text: [`Hola, ${organizer.name}:`, '', byAdmin ? `La administración canceló ${ev.name}.` : `La administración aprobó cancelar ${ev.name}.`, ...(byAdmin ? [`Motivo: ${c.reason}`] : []), `Órdenes reembolsadas: ${results.filter(r => r.ok).length} de ${results.length}.`, '', 'eTicket'].join('\n') });
     return { ok: true, status: 'approved', orders: results.length, refunded: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length, tickets: affected.length };
+  }
+
+  // The administrator cancels an event without waiting for its organizer; a pending request is approved instead.
+  function cancelByAdmin(actor, eventId, data) {
+    const ev = catalog.event(eventId);
+    if (!ev || ev.sample) throw failure(404, 'Evento no encontrado. Los eventos de muestra no se cancelan.');
+    if (ev.status !== 'published') throw failure(409, 'Solo se puede cancelar un evento publicado.');
+    const reason = String(data?.reason || '').trim().slice(0, 500);
+    if (!reason) throw failure(400, 'Escribe el motivo de la cancelación.');
+    const pending = db.prepare("SELECT id FROM cancellations WHERE event_id=? AND status='requested'").get(ev.id);
+    const cancelId = pending?.id || newId('can');
+    if (!pending) db.prepare("INSERT INTO cancellations(id,event_id,requested_by,reason,status,created) VALUES(?,?,?,?,'requested',?)").run(cancelId, ev.id, actor.id, reason, clock());
+    return decideCancel(actor, cancelId, { approve: true, reason });
   }
 
   // ---- T11.5: refunds the gateway rejected, for the administrator to handle.
@@ -217,10 +232,21 @@ export function createRefunds(db, { failure, clock = Date.now, catalog, tickets,
     if (r.status !== 'failed') throw failure(409, 'Solo se pueden resolver reembolsos fallidos.');
     const notes = String(data?.notes || '').trim().slice(0, 300);
     if (!notes) throw failure(400, 'Describe cómo se resolvió (por ejemplo, transferencia bancaria).');
-    db.prepare("UPDATE refunds SET status='resolved', notes=?, resolved=? WHERE id=?").run(notes, clock(), r.id);
-    audit.record(actor, 'reembolso.resuelto', { targetType: 'orden', targetId: r.order_id, eventId: r.event_id, details: `${money(r.amount)} · ${notes}` });
+    // Paid back outside the gateway: the order counts the refund and the ticket stops working,
+    // exactly as when the gateway accepts it.
+    const order = db.prepare('SELECT * FROM orders WHERE id=?').get(r.order_id), t = r.ticket_id && tickets.ticket(r.ticket_id);
+    const release = Boolean(t && t.status === 'valid');
+    transaction(() => {
+      db.prepare("UPDATE refunds SET status='resolved', notes=?, resolved=? WHERE id=?").run(notes, clock(), r.id);
+      if (order) applyToOrder(order, r.amount);
+      if (release) { db.prepare("UPDATE tickets SET status='refunded', updated=? WHERE id=?").run(clock(), t.id); tickets.releaseSeat(t); }
+      audit.record(actor, 'reembolso.resuelto', { targetType: 'orden', targetId: r.order_id, eventId: r.event_id, details: `${money(r.amount)} · ${notes}` });
+    });
+    const ev = catalog.event(r.event_id), buyer = order && user(order.user_id);
+    if (release) notify.afterRelease(ev, t.function_id);
+    if (buyer) mailer.send({ to: buyer.email, kind: 'reembolso', subject: `Atendimos tu reembolso de ${ev?.name || 'eTicket'}`, text: [`Hola, ${buyer.name}:`, '', `Tu reembolso de ${money(r.amount)} (orden ${r.order_id}${t ? `, boleto ${t.seat}` : ''}) se resolvió por fuera de la pasarela: ${notes}.`, ...(release ? ['El QR de ese boleto ya no es válido.'] : []), '', 'eTicket'].join('\n') });
     return { ok: true };
   }
 
-  return { refundTicket, requestRefund, reschedule, requestCancel, cancellations, cancellationFor, decideCancel, listRefunds, retry, resolve };
+  return { refundTicket, requestRefund, reschedule, requestCancel, cancelByAdmin, cancellations, cancellationFor, decideCancel, listRefunds, retry, resolve };
 }

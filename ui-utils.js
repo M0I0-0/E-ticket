@@ -16,6 +16,15 @@ export function dataTable(columns, rows, totals) {
   return `<div class="table-scroll"><table class="data-table"><thead><tr>${columns.map(c => `<th class="${c.type === 'money' || c.type === 'int' ? 'num' : ''}">${esc(c.label)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${columns.map(c => `<td class="${c.type === 'money' || c.type === 'int' ? 'num' : ''}">${cell(r[c.key], c.type)}</td>`).join('')}</tr>`).join('')}</tbody>${totals ? `<tfoot><tr>${columns.map((c, i) => `<td class="${c.type === 'money' || c.type === 'int' ? 'num' : ''}">${i === 0 ? 'Total' : totals[c.key] == null ? '' : cell(totals[c.key], c.type)}</td>`).join('')}</tr></tfoot>` : ''}</table></div>`;
 }
 
+// Event and request states as people read them.
+export const STATUS_LABEL = { draft: 'Borrador', review: 'En revisión', published: 'Publicado', rejected: 'Rechazado', cancelled: 'Cancelado', pending: 'Pendiente', approved: 'Aprobado', none: 'Sin solicitud' };
+export const statusLabel = status => STATUS_LABEL[status] || status;
+
+// Seat maps: rows A–Z, then AA, AB… (up to ZZ, as the server accepts), numbered from 1 in each row.
+export const MAX_ROWS = 702;
+export const rowName = index => index < 26 ? String.fromCharCode(65 + index) : String.fromCharCode(64 + Math.floor(index / 26)) + String.fromCharCode(65 + index % 26);
+export const seatLabels = (count, perRow) => Array.from({ length: count }, (_, i) => `${rowName(Math.floor(i / perRow))}${i % perRow + 1}`);
+
 export const STATUS_BADGE = {
   valid: '<span class="pill ok">Vigente</span>', used: '<span class="pill">Utilizado</span>', refunded: '<span class="pill warn">Reembolsado</span>', cancelled: '<span class="pill bad">Evento cancelado</span>',
   paid: '<span class="pill ok">Pagada</span>', partially_refunded: '<span class="pill warn">Reembolso parcial</span>',

@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { SAMPLE_SEATS, SAMPLE_TAKEN, SAMPLE_ZONES, SAMPLE_GENERAL_CAPACITY } from './catalog.js';
+import { SAMPLE_EVENTS, SAMPLE_SEATS, SAMPLE_TAKEN, SAMPLE_ZONES, SAMPLE_GENERAL_CAPACITY, startsAt } from './catalog.js';
 
-const SEAT = /^[A-Z][1-3]?\d{1,3}$/;
+// Row letters A–Z, then AA, AB… up to ZZ, and the seat number: A1, B12, AA3.
+export const SEAT = /^[A-Z]{1,2}\d{1,4}$/;
 const OPEN = "('active','paying')";
 const EXPIRED = 'Tu reserva expiró. Los lugares se liberaron y no se realizó ningún cobro.';
 
@@ -56,19 +57,22 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
       const zone = SAMPLE_ZONES[id], kind = zone === 'General' ? 'general' : 'seat';
       if (String(functionId || '1') !== '1') throw failure(400, 'La función seleccionada no pertenece al evento.');
       if (zoneName && zoneName !== zone) throw failure(400, 'La zona seleccionada no pertenece al evento.');
-      return { eventId: id, functionId: '1', zone, kind, sample: true, seats: kind === 'seat' ? SAMPLE_SEATS : [], taken: kind === 'seat' ? SAMPLE_TAKEN : [], blocked: [], capacity: SAMPLE_GENERAL_CAPACITY, limit: 6 };
+      const sample = SAMPLE_EVENTS[id];
+      return { eventId: id, functionId: '1', zone, kind, sample: true, seats: kind === 'seat' ? SAMPLE_SEATS : [], taken: kind === 'seat' ? SAMPLE_TAKEN : [], blocked: [], capacity: SAMPLE_GENERAL_CAPACITY, limit: 6, startsAt: startsAt(sample.date, sample.hour) };
     }
     const event = db.prepare("SELECT payload FROM events WHERE id=? AND status='published'").get(id);
     if (!event) throw failure(404, 'El evento no está disponible para compra.');
     const payload = JSON.parse(event.payload);
     const fnId = String(functionId || payload.functions?.[0]?.id || '1');
-    if (payload.functions?.length && !payload.functions.some(fn => String(fn.id) === fnId)) throw failure(400, 'La función seleccionada no pertenece al evento.');
+    const fn = payload.functions?.length ? payload.functions.find(f => String(f.id) === fnId) : { date: payload.date, hour: payload.hour || '20:00' };
+    if (!fn) throw failure(400, 'La función seleccionada no pertenece al evento.');
     const zone = zoneName ? payload.zones?.find(z => z.name === zoneName) : payload.zones?.[0];
     if (!zone) throw failure(400, 'La zona seleccionada no pertenece al evento.');
     return {
       eventId: id, functionId: fnId, zone: zone.name, kind: zone.type || (/general/i.test(zone.name) ? 'general' : 'seat'), sample: false,
       seats: zone.seats || [], taken: [], blocked: [...(payload.blockedSeats || []), ...(zone.blockedSeats || [])],
       capacity: Number(zone.capacity) || 0, limit: Number(payload.ticketLimit) || 6, saleStart: payload.saleStart, saleEnd: payload.saleEnd,
+      startsAt: startsAt(fn.date, fn.hour),
     };
   }
 
@@ -95,6 +99,13 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
       : db.prepare('SELECT sold FROM event_function_sales WHERE event_id=? AND function_id=? AND zone=?').get(t.eventId, t.functionId, t.zone)?.sold || 0;
     return { sold, held, available: Math.max(0, t.capacity - sold - held) };
   }
+  // Numbered zones also respect their capacity, even if the map was drawn with more seats.
+  function seatRoom(t, userId) {
+    if (t.sample) return Infinity;
+    const sold = db.prepare('SELECT sold FROM event_function_sales WHERE event_id=? AND function_id=? AND zone=?').get(t.eventId, t.functionId, t.zone)?.sold || 0;
+    const held = db.prepare(`SELECT COUNT(*) AS n FROM hold_seats s JOIN holds h ON h.id=s.hold_id WHERE s.event_id=? AND s.function_id=? AND s.zone=? AND h.status IN ${OPEN} AND h.user_id<>?`).get(t.eventId, t.functionId, t.zone, userId).n;
+    return t.capacity - sold - held;
+  }
 
   function selection(t, data, allowEmpty = false) {
     if (t.kind === 'general') {
@@ -106,7 +117,7 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     if (!Array.isArray(data.seats) || seats.length !== data.seats.length || seats.length > t.limit || (!allowEmpty && !seats.length) || seats.some(seat => !SEAT.test(seat))) throw failure(400, `Elige de 1 a ${t.limit} asientos válidos.`);
     for (const seat of seats) {
       if (t.seats.length && !t.seats.includes(seat)) throw failure(400, `El asiento ${seat} no pertenece a la zona.`);
-      if (t.blocked.includes(seat)) throw conflict(409, `El asiento ${seat} está bloqueado para cortesía o prensa.`, { seat });
+      if (t.blocked.includes(seat)) throw conflict(409, `El asiento ${seat} está bloqueado para cortesía o prensa.`, { seat, reason: 'blocked' });
     }
     return { seats, quantity: seats.length };
   }
@@ -168,6 +179,7 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     const open = openHold(user.id);
     if (open) throw conflict(409, 'Tienes una compra en curso. Continúala o cancélala antes de empezar otra.', { hold: view(open) });
     const t = target(data.eventId, data.functionId, data.zone), now = clock();
+    if (t.startsAt <= now) throw failure(409, 'Esta función ya comenzó o ya pasó: ya no se venden boletos.');
     if (t.saleStart && now < Date.parse(t.saleStart)) throw failure(409, 'La venta de este evento todavía no inicia.');
     if (t.saleEnd && now > Date.parse(t.saleEnd)) throw failure(409, 'La venta de este evento ya terminó.');
     const { seats, quantity } = selection(t, data), id = randomBytes(16).toString('hex');
@@ -175,8 +187,10 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
       transaction(() => {
         db.prepare("INSERT INTO holds(id,user_id,event_id,function_id,zone,kind,seats,quantity,status,created,expires,fee_rate) VALUES(?,?,?,?,?,?,?,?,'active',?,?,?)")
           .run(id, user.id, t.eventId, t.functionId, t.zone, t.kind, JSON.stringify(seats), quantity, now, now + holdMs, feeRate());
-        if (t.kind === 'seat') lock(id, t, seats, user.id);
-        else if (quantity > generalCount(t, user.id).available) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
+        if (t.kind === 'seat') {
+          if (quantity > seatRoom(t, user.id)) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
+          lock(id, t, seats, user.id);
+        } else if (quantity > generalCount(t, user.id).available) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
       });
     } catch (error) {
       const other = !error.status && openHold(user.id);
@@ -194,8 +208,10 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     if (!quantity) { close(h.id, 'cancelled', 'sin lugares'); return { hold: null, cancelled: true }; }
     transaction(() => {
       db.prepare('DELETE FROM hold_seats WHERE hold_id=?').run(h.id);
-      if (t.kind === 'seat') lock(h.id, t, seats, user.id);
-      else if (quantity > generalCount(t, user.id).available) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
+      if (t.kind === 'seat') {
+        if (quantity > seatRoom(t, user.id)) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
+        lock(h.id, t, seats, user.id);
+      } else if (quantity > generalCount(t, user.id).available) throw failure(409, 'Ya no hay suficientes lugares en esta zona.');
       db.prepare('UPDATE holds SET seats=?, quantity=? WHERE id=?').run(JSON.stringify(seats), quantity, h.id);
     });
     return { hold: view(find(h.id)) };
@@ -232,7 +248,7 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     return { hold: null, expired: true, attempts, maxAttempts: 3 };
   }
 
-  // Runs inside the orders transaction, so it must not open its own.
+  // Runs inside the payment transaction, so it must not open its own.
   function completeForOrder(user, order) {
     const h = db.prepare('SELECT * FROM holds WHERE id=? AND user_id=?').get(String(order.holdId), user.id), now = clock();
     if (!h) throw failure(409, 'No encontramos tu apartado. Elige tus boletos otra vez.');
@@ -245,24 +261,8 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     return h;
   }
 
-  // Orders saved without a hold still cannot take seats another buyer holds.
-  function guardLegacy(user, order) {
-    const id = String(order.eventId);
-    let zone = SAMPLE_ZONES[id], fnId = '1';
-    if (!zone) {
-      const event = db.prepare("SELECT payload FROM events WHERE id=? AND status='published'").get(id);
-      if (!event) return;
-      const payload = JSON.parse(event.payload);
-      zone = (payload.zones?.find(z => z.name === order.zone) || payload.zones?.[0])?.name;
-      fnId = String(order.functionId || payload.functions?.[0]?.id || '1');
-    }
-    if (!zone) return;
-    const owner = db.prepare('SELECT h.user_id FROM hold_seats s JOIN holds h ON h.id=s.hold_id WHERE s.event_id=? AND s.function_id=? AND s.zone=? AND s.seat=?');
-    for (const ticket of order.tickets) {
-      const row = owner.get(id, fnId, zone, ticket.seat);
-      if (row && row.user_id !== user.id) throw conflict(409, `El asiento ${ticket.seat} está apartado por otra persona.`, { seat: ticket.seat });
-    }
-  }
+  // Closes a purchase whose charge cannot become tickets (RN-12), so it cannot be paid again.
+  const release = (id, reason) => close(id, 'cancelled', reason);
 
   function adminSummary() {
     const counts = { active: 0, paying: 0, completed: 0, cancelled: 0, expired: 0 };
@@ -272,5 +272,5 @@ export function createHolds(db, { failure, clock = Date.now, holdMs = 600000, pa
     return { counts, expired };
   }
 
-  return { sweep, current, availability, create, update, cancel, pay, paymentFailed, completeForOrder, guardLegacy, adminSummary };
+  return { sweep, current, availability, create, update, cancel, pay, paymentFailed, completeForOrder, release, adminSummary };
 }

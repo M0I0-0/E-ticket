@@ -84,6 +84,7 @@ export function registerRoutes(router, { failure, admin, tickets, refunds, repor
   router.post('/api/admin/refunds/:id/resolve', ({ user, params, data }) => refunds.resolve(role(user, 'administrador'), params.id, data));
   router.get('/api/admin/cancellations', ({ user }) => (role(user, 'administrador'), { cancellations: refunds.cancellations() }));
   router.post('/api/admin/cancellations/:id/decision', ({ user, params, data }) => refunds.decideCancel(role(user, 'administrador'), params.id, data));
+  router.post('/api/admin/events/:id/cancel', ({ user, params, data }) => refunds.cancelByAdmin(role(user, 'administrador'), params.id, data));
   router.post('/api/admin/tickets/:id/refund', ({ user, params, data }) => refunds.refundTicket(role(user, 'administrador'), params.id, data));
   router.get('/api/admin/orders/:id', ({ user, params }) => {
     role(user, 'administrador');

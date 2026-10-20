@@ -12,7 +12,8 @@ const MINUTE = 60000;
 async function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eticket-payments-'));
   const filename = join(dir, 'payments.sqlite');
-  const messages = [], clock = { now: Date.now() };
+  // A fixed day before the sample events, so the tests keep passing after their dates.
+  const messages = [], clock = { now: new Date('2026-10-15T12:00:00').getTime() };
   const app = createAccounts({ ADMIN_EMAIL: 'admin@example.com' }, {
     filename, clock: () => clock.now, log: () => {}, webhookSecret: 'whsec_prueba',
     transport: { async sendMail(message) { messages.push(message); return { accepted: [message.to] }; } },

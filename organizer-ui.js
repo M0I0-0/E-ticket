@@ -1,5 +1,5 @@
 import { accountApi } from './account-ui.js';
-import { $, $$, esc, money, dateTime, functionLabel } from './ui-utils.js';
+import { $, $$, esc, money, dateTime, functionLabel, statusLabel } from './ui-utils.js';
 
 const RESULT = { valid: '<span class="pill ok">Válido</span>', used: '<span class="pill bad">Ya utilizado</span>', invalid: '<span class="pill bad">No válido</span>', reverted: '<span class="pill warn">Revertido</span>' };
 const CANCEL = { requested: 'Solicitud pendiente de la administración', approved: 'Cancelación aprobada: el evento se canceló y las órdenes se reembolsaron', rejected: 'La administración rechazó la cancelación' };
@@ -18,7 +18,7 @@ export async function renderEventDashboard({ app, user, eventId, toast, backHref
   const kpi = (label, value, note = '') => `<div class="kpi"><span>${esc(label)}</span><strong>${value}</strong>${note ? `<small>${esc(note)}</small>` : ''}</div>`;
   const live = ev.status === 'published', owner = user.role === 'organizador';
   app.innerHTML = `<a class="back" href="${backHref}">‹ Volver</a><div class="eyebrow">Panel del evento${ev.sample ? ' · evento de muestra' : ''}</div><h1 style="font-size:38px">${esc(ev.name)}</h1>
-    <p>${esc([ev.venue, ev.city].filter(Boolean).join(', '))} · ${ev.status === 'published' ? '<span class="pill ok">En venta</span>' : ev.status === 'cancelled' ? '<span class="pill bad">Cancelado</span>' : `<span class="pill">${esc(ev.status)}</span>`}</p>
+    <p>${esc([ev.venue, ev.city].filter(Boolean).join(', '))} · ${ev.status === 'published' ? '<span class="pill ok">En venta</span>' : ev.status === 'cancelled' ? '<span class="pill bad">Cancelado</span>' : `<span class="pill">${esc(statusLabel(ev.status))}</span>`}</p>
     <div class="kpis">
       ${kpi('Boletos vendidos', totals.sold, `${totals.orders} órdenes`)}
       ${kpi('Ingresos por boletos', money(totals.revenue), 'Precio de los boletos')}
@@ -45,7 +45,8 @@ export async function renderEventDashboard({ app, user, eventId, toast, backHref
         ${live ? `<form id="reschedule-form"><div class="field"><label for="re-fn">Función</label><select id="re-fn">${ev.functions.map(f => `<option value="${esc(f.id)}">${esc(functionLabel(f.date, f.hour))}</option>`).join('')}</select></div><div class="split tight"><div class="field"><label for="re-date">Nueva fecha</label><input id="re-date" type="date" required></div><div class="field"><label for="re-hour">Hora</label><input id="re-hour" type="time" required></div></div><div class="field"><label for="re-reason">Motivo</label><input id="re-reason" required maxlength="300"></div><p class="muted small-note">Avisamos por correo a quienes tienen boletos y les damos 10 días para pedir reembolso.</p><button class="btn small">Cambiar fecha</button></form>` : '<p class="muted">Solo se reprograman eventos en venta.</p>'}
         <h2 style="margin-top:28px">Cancelación</h2>
         ${report.cancellation ? `<div class="alert">${esc(CANCEL[report.cancellation.status] || report.cancellation.status)}.<br><small>Motivo: ${esc(report.cancellation.reason)}${report.cancellation.decision_reason ? ` · Respuesta: ${esc(report.cancellation.decision_reason)}` : ''}</small></div>` : ''}
-        ${owner && live && report.cancellation?.status !== 'requested' ? `<form id="cancel-form"><div class="field"><label for="cancel-reason">Motivo de la cancelación</label><textarea id="cancel-reason" required maxlength="500"></textarea></div><p class="muted small-note">La administración debe aprobarla. Al aprobarse se invalidan todos los QR y se reembolsa el 100 % de cada orden, con cargo incluido.</p><button class="btn secondary small">Solicitar cancelación</button></form>` : ''}`}
+        ${owner && live && report.cancellation?.status !== 'requested' ? `<form id="cancel-form"><div class="field"><label for="cancel-reason">Motivo de la cancelación</label><textarea id="cancel-reason" required maxlength="500"></textarea></div><p class="muted small-note">La administración debe aprobarla. Al aprobarse se invalidan todos los QR y se reembolsa el 100 % de cada orden, con cargo incluido.</p><button class="btn secondary small">Solicitar cancelación</button></form>` : ''}
+        ${!owner && live ? `<form id="admin-cancel-form"><div class="field"><label for="admin-cancel-reason">Cancelar este evento como administración</label><textarea id="admin-cancel-reason" required maxlength="500" placeholder="Motivo que leerán el organizador y los compradores"></textarea></div><p class="muted small-note">${report.cancellation?.status === 'requested' ? 'Aprueba la solicitud pendiente del organizador.' : 'No necesita la solicitud del organizador.'} Se invalidan todos los QR y se reembolsa el 100 % de cada orden.</p><button class="btn small">Cancelar evento y reembolsar</button></form>` : ''}`}
       </section>
     </div>`;
   const reload = () => renderEventDashboard({ app, user, eventId, toast, backHref });
@@ -69,5 +70,10 @@ export async function renderEventDashboard({ app, user, eventId, toast, backHref
   $('#cancel-form')?.addEventListener('submit', async event => {
     event.preventDefault();
     try { await accountApi(`events/${ev.id}/cancel-request`, { reason: $('#cancel-reason').value }); toast('Solicitud enviada a la administración.'); reload(); } catch (error) { toast(error.message); }
+  });
+  $('#admin-cancel-form')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!confirm(`¿Cancelar «${ev.name}»? Se invalidarán todos sus QR y se reembolsará cada orden.`)) return;
+    try { const r = await accountApi(`admin/events/${encodeURIComponent(ev.id)}/cancel`, { reason: $('#admin-cancel-reason').value }); toast(`Evento cancelado: ${r.refunded} de ${r.orders} órdenes reembolsadas${r.failed ? `, ${r.failed} fallaron (ver Reembolsos)` : ''}.`); reload(); } catch (error) { toast(error.message); }
   });
 }

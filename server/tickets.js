@@ -127,8 +127,8 @@ export function createTickets(db, { failure, clock = Date.now, catalog, mailer, 
       usedAt: t.used_at, usedGate: t.used_gate,
       // T11.1: transfers close 24 hours before the function starts.
       transferable: Boolean(open && f && f.startsAt - now > DAY), transferDeadline: f ? f.startsAt - DAY : null,
-      // T11.6: after a date change the holder has 10 days to ask for a refund.
-      refundUntil: open && change && change.refund_until > now ? change.refund_until : null,
+      // T11.6: after a date change the holder has 10 days to ask for a refund; tickets bought after the change already knew the new date.
+      refundUntil: open && change && change.refund_until > now && t.created <= change.created ? change.refund_until : null,
       rescheduled: change ? { from: `${change.old_date} ${change.old_hour}`, to: `${change.new_date} ${change.new_hour}`, reason: change.reason, refundUntil: change.refund_until } : null,
       eventCancelled: ev?.status === 'cancelled',
     };
@@ -311,12 +311,18 @@ export function createTickets(db, { failure, clock = Date.now, catalog, mailer, 
     const capacity = sum('capacity'), sold = sum('sold'), held = sum('held'), available = sum('available');
     return { zones, capacity, sold, held, available, soldOut: available === 0, soldOutBySales: capacity > 0 && sold >= capacity };
   }
-  // T11.8: whether each listed event and function is sold out right now.
+  // T11.8: whether each listed event and function is sold out right now. "Sold out" counts
+  // sales only; places that are just held for a few minutes are reported as heldOut.
   function catalogStatus() {
+    const now = clock();
     return Object.fromEntries(catalog.listed().filter(Boolean).map(ev => {
-      const functions = Object.fromEntries(ev.functions.map(f => { const s = functionStats(ev, f.id); return [f.id, { available: s.available, soldOut: s.soldOut }]; }));
-      const all = Object.values(functions);
-      return [ev.id, { soldOut: all.length > 0 && all.every(f => f.soldOut), available: all.reduce((n, f) => n + f.available, 0), functions }];
+      const functions = Object.fromEntries(ev.functions.map(f => {
+        const s = functionStats(ev, f.id);
+        return [f.id, { available: s.available, soldOut: s.soldOutBySales, heldOut: !s.soldOutBySales && s.available === 0, past: f.startsAt <= now, startsAt: f.startsAt }];
+      }));
+      const upcoming = Object.values(functions).filter(f => !f.past);
+      const soldOut = upcoming.length > 0 && upcoming.every(f => f.soldOut);
+      return [ev.id, { soldOut, heldOut: !soldOut && upcoming.length > 0 && upcoming.every(f => f.soldOut || f.heldOut), past: upcoming.length === 0, available: upcoming.reduce((n, f) => n + f.available, 0), functions }];
     }));
   }
 

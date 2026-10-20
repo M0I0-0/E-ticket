@@ -184,12 +184,13 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
     if (hold.status === 'cancelled') throw failure(409, 'Esta compra fue cancelada.');
     if (hold.status === 'expired') throw failure(410, 'Tu reserva expiró. Los lugares se liberaron.');
 
-    // T07.4: Estado En pago - freeze hold for up to 5 minutes
-    holds.pay(user, hold.id);
-
-    // Calculate itemized breakdown and exact total (T07.1 / RN-10)
+    // Calculate itemized breakdown and exact total (T07.1 / RN-10). It runs before the
+    // freeze, so an event that is no longer on sale leaves the purchase as it was.
     const breakdown = calculateAmount(hold);
     const amount = breakdown.total;
+
+    // T07.4: Estado En pago - freeze hold for up to 5 minutes
+    holds.pay(user, hold.id);
 
     // Simulate rejection scenarios (T07.7)
     const isRejection = token.includes('reject') || token.includes('fail') || last4 === '0002' || data.simulate === 'rejected';
@@ -239,6 +240,8 @@ export function createPayments(db, holds, { clock = Date.now, log = console.log,
         INSERT INTO orphan_payments (id, user_id, email, hold_id, event_id, amount, last4, gateway_ref, reason, status, created)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'unresolved', ?)
       `).run(orphanId, user.id, user.email, hold.id, hold.event_id, amount, last4, transactionId, 'Simulación RN-12: Error interno al generar boletos tras cobro aprobado', now);
+      // The charge already went through: the purchase closes so a retry cannot charge it twice.
+      holds.release(hold.id, 'pago aprobado sin boletos (RN-12)');
 
       return {
         ok: false,

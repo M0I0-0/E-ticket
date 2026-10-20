@@ -754,7 +754,8 @@ footer span {
   border: 1px solid #d99a2b;
   color: #ffc65c;
 }
-.seat.sold {
+.seat.sold,
+.seat.blocked {
   background: #343440;
   border: 1px dashed #686676;
   color: #8d8b9e;
@@ -821,6 +822,43 @@ footer span {
 }
 .seat-panel {
   position: relative;
+}
+/* Wide rows keep a seat size people can tap and scroll sideways instead of shrinking. */
+.seat-scroll {
+  overflow-x: auto;
+  padding-bottom: 6px;
+}
+.seats.wide {
+  max-width: none;
+  width: max-content;
+  min-width: 100%;
+}
+/* Administration: venue list with its buttons and the details of an event under review. */
+.venue-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.venue-row span {
+  flex: 1 1 200px;
+}
+.review-details {
+  margin: 12px 0;
+}
+.review-details summary {
+  cursor: pointer;
+  color: var(--light);
+  margin-bottom: 10px;
+}
+.info-list.compact {
+  gap: 8px;
+}
+.info-list.compact div {
+  padding-bottom: 8px;
+}
+.info-list.compact dd {
+  font-size: 14px;
 }
 .seat-popover {
   position: absolute;

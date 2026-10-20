@@ -77,7 +77,8 @@ db.close();
 const codes = new Map();
 const app = createAccounts({ ADMIN_EMAIL: ADMIN }, {
   filename, log: () => {},
-  transport: { async sendMail(message) { const code = message.text.match(/código eTicket es (\d{6})/)?.[1]; if (code) codes.set(message.to, code); return { accepted: [message.to] }; } },
+  // Nothing leaves this script: the outbox marks these e-mails as «Simulado», not as sent.
+  transport: { async sendMail(message) { const code = message.text.match(/código eTicket es (\d{6})/)?.[1]; if (code) codes.set(message.to, code); return { accepted: [message.to], simulated: true }; } },
 });
 const server = createServer((req, res) => app.middleware(req, res, () => { res.statusCode = 404; res.end(); }));
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

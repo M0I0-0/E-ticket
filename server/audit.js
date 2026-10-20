@@ -19,6 +19,9 @@ export const AUDIT_LABELS = {
   'personal.retirado': 'Retiró personal',
   'boleto.transferido': 'Transfirió un boleto',
   'funcion.reprogramada': 'Cambió la fecha de una función',
+  'recinto.creado': 'Registró un recinto',
+  'recinto.editado': 'Editó un recinto',
+  'recinto.borrado': 'Borró un recinto',
 };
 
 export function createAudit(db, clock = Date.now) {

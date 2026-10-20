@@ -19,7 +19,7 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
 
 1. **Inicio:** muestra los eventos destacados. Pulsa «Explorar cartelera».
    ![Inicio](manual/visitante-1-inicio.png)
-2. **Cartelera:** busca por nombre o artista y filtra por categoría, fecha, ciudad y precio. Cada evento indica si está **En venta** o **Agotado**; esa etiqueta se actualiza sola.
+2. **Cartelera:** busca por nombre o artista y filtra por categoría, fecha, ciudad y precio (las categorías y ciudades salen de los eventos a la venta). Cada evento indica si está **En venta**, **Apartados** (todos sus lugares están apartados unos minutos por otras personas) o **Agotado**; esa etiqueta se actualiza sola. Los eventos cuyas funciones ya pasaron no aparecen.
    ![Cartelera con un evento agotado](manual/visitante-2-cartelera-agotado.png)
 3. **Detalle:** elige la función y la zona para ver el precio final (incluye cargo por servicio e IVA). Si la función está agotada, el botón dice «Agotado».
    ![Evento agotado](manual/visitante-3-evento-agotado.png)
@@ -32,15 +32,16 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
 ### Crear cuenta e iniciar sesión
 
 1. Pulsa «Iniciar sesión» → «Crear cuenta». Llena nombres, apellidos, correo y contraseña (6 a 15 caracteres, con una mayúscula y un símbolo).
-2. Escribe el código de 6 dígitos que llega a tu correo. Vence en 10 minutos.
-3. La sesión se cierra sola tras 30 minutos sin actividad.
+2. Escribe el código de 6 dígitos que llega a tu correo. Vence en 10 minutos y se anula tras 5 intentos equivocados; «Reenviar código» manda otro.
+3. Si cerraste la pantalla antes de verificar, inicia sesión: aparece «Enviarme un código nuevo para verificar».
+4. La sesión se cierra sola tras 30 minutos sin actividad. Al cerrar sesión en una pestaña, las demás también la cierran.
 
 ### Elegir asientos
 
 1. En el detalle del evento pulsa «Elegir boletos».
 2. **Al tocar un asiento se aparta para ti de inmediato** y empieza un reloj de 10 minutos que no se puede extender. Tus asientos se ven morados con ✓; puedes tocar más (hasta 6) o tocar uno tuyo para liberarlo.
    ![Asientos apartados](manual/comprador-1-asientos-apartados.png)
-3. Los asientos con **candado ámbar** los está comprando otra persona; se liberan solos si no termina. Los de **×** ya están vendidos o bloqueados.
+3. Los asientos con **candado ámbar** los está comprando otra persona; se liberan solos si no termina. Los de **×** ya están vendidos o bloqueados para cortesía o prensa. Si la zona tiene filas largas, el mapa se desplaza de lado.
    ![Asientos de otra persona con candado](manual/comprador-2-asientos-de-otros.png)
 4. Si otra persona toca el mismo asiento un instante antes, verás «No se pudo apartar», el asiento en rojo y una **estrella con un asiento sugerido** cerca.
    ![Conflicto y asiento sugerido](manual/comprador-3-conflicto-sugerido.png)
@@ -61,7 +62,7 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
    | --- | --- |
    | `4242 4242 4242 4242` | Pago aprobado. |
    | `4000 0000 0000 0002` | Rechazado por fondos insuficientes (tienes 3 intentos). |
-   | `4000 0000 0000 9999` | Cobro aprobado sin boletos (caso que atiende la administración). |
+   | `4000 0000 0000 9999` | Cobro aprobado sin boletos (caso que atiende la administración). La compra se cierra y no se vuelve a cobrar. |
    | `4000 0000 0000 0069` | Aprobado, pero si después se cancela el evento la pasarela rechaza el reembolso. |
 
 4. Al aprobarse ves el comprobante y te llega un correo con un **PDF por boleto**.
@@ -74,16 +75,19 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
 2. En la entrada presenta el QR (en pantalla o impreso). Si la cámara del personal falla, pueden escribir el código.
 3. **Transferir:** pulsa «Transferir», escribe el correo de otra cuenta eTicket y confirma. La otra persona recibe el boleto con un **QR nuevo** y el tuyo deja de funcionar. Se puede hasta 24 horas antes del evento.
    ![Transferir un boleto](manual/comprador-8-transferir.png)
-4. **Si el evento cambia de fecha**, te llega un correo y en el boleto aparece «Pedir reembolso» durante 10 días.
+4. **Si el evento cambia de fecha**, te llega un correo y en el boleto aparece «Pedir reembolso» durante 10 días (solo en boletos comprados antes del cambio).
 5. **Si el evento se cancela**, recibes el reembolso del 100 % (cargo incluido) y tus QR dejan de ser válidos.
 6. «Ver historial de compras» muestra cada orden con su desglose y los reembolsos.
 
 ## 3. Organizador
 
 1. Desde «Mi cuenta», un comprador pulsa «Enviar solicitud» para ser organizador. La administración la aprueba o la rechaza con un motivo.
-2. En «Panel» → «Crear evento» llena nombre, recinto, funciones (una por línea: `AAAA-MM-DD,HH:MM`), zonas, asientos de cortesía o prensa, límite por compra (1 a 6) y ventana de venta. Guarda y pulsa «Enviar a revisión».
+2. En «Panel» → «Crear evento» llena nombre, recinto, funciones (una por línea: `AAAA-MM-DD,HH:MM`, siempre futuras), zonas, asientos de cortesía o prensa, límite por compra (1 a 6) y ventana de venta. Guarda y pulsa «Enviar a revisión».
+   - **Zonas:** una por línea, `nombre,precio,cupo,accesibles,filas,asientos por fila,bloqueados`. En una zona numerada el cupo debe ser filas × asientos por fila; las filas van de la A a la Z y siguen con AA, AB… La última columna bloquea asientos solo de esa zona (separados por espacio, por ejemplo `A1 A2`); el campo de bloqueados de abajo los bloquea en todas.
+   - Si eliges un recinto, sus zonas se copian **sin precio**: escribe el de cada una. Si algo está mal, el aviso dice en qué línea.
    ![Mis eventos](manual/organizador-1-mis-eventos.png)
-3. Cuando el evento está publicado, pulsa **«Panel del evento»**:
+3. **Un evento publicado sigue a la venta.** «Editar textos» cambia la descripción, el artista, la categoría, el límite por compra y el fin de venta. El nombre, el recinto, las zonas y los precios ya no cambian; la fecha se mueve con «Cambiar fecha» y, si hay que suspenderlo, se pide su cancelación (un evento publicado no se borra).
+4. Cuando el evento está publicado, pulsa **«Panel del evento»**:
    - **Cifras:** vendidos, ingresos por boletos, comisión de eTicket, monto a liquidar, disponibles, cortesías, asistencia y reembolsos.
    - **Ventas por función y zona**, con «Descargar CSV».
    - **Asistencia real:** escaneados contra vendidos por función.
@@ -102,6 +106,7 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
    - **«Activar cámara»** y apuntar al QR; la validación es automática.
    - **«Tomar foto del QR»** si la cámara en vivo no abre.
    - **Búsqueda manual:** escribe el código del boleto (no importan mayúsculas, espacios ni guiones).
+   - Con la cámara, un mismo QR no se vuelve a leer hasta 10 segundos después, aunque siga frente a ella.
    ![Validación con la cámara](manual/taquilla-5-camara.png)
 3. Qué significa cada resultado:
    - **Verde «ACCESO VÁLIDO»:** la persona puede pasar; se muestran asiento y titular.
@@ -118,15 +123,15 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
 
 El panel tiene pestañas:
 
-- **General:** pagos sin boletos (RN-12), compras expiradas, solicitudes de organizador, alta de recintos y eventos por revisar.
+- **General:** pagos sin boletos (RN-12), compras expiradas, solicitudes de organizador (la decisión se avisa por correo), recintos y eventos por revisar. Cada evento en revisión muestra sus funciones, zonas, precios, bloqueados y venta antes de aprobarlo. Los recintos se registran, se editan y se borran; los cambios no afectan a eventos ya creados.
   ![General](manual/admin-1-general.png)
-- **Eventos:** todos los eventos con su disponibilidad; «Ver panel» abre las mismas cifras que ve el organizador.
+- **Eventos:** todos los eventos con su disponibilidad; «Ver panel» abre las mismas cifras que ve el organizador y, en un evento publicado, **«Cancelar evento y reembolsar»** sin esperar la solicitud del organizador.
   ![Eventos](manual/admin-9-eventos.png)
 - **Reportes:** ventas por periodo, comisiones, eventos más vendidos, compras expiradas y reembolsos, filtrados por fechas. «Descargar CSV» baja exactamente las mismas cifras y abre en Excel.
   ![Reportes](manual/admin-4-reportes.png)
-- **Usuarios:** busca por nombre o correo, cambia entre comprador y taquilla, y bloquea o desbloquea. Una cuenta bloqueada no puede comprar, pero sus boletos siguen siendo válidos.
+- **Usuarios:** busca por nombre o correo, cambia entre comprador y taquilla, quita el rol de organizador (sus eventos siguen como están) y bloquea o desbloquea. Una cuenta bloqueada no puede comprar, pero sus boletos siguen siendo válidos.
   ![Usuarios](manual/admin-5-usuarios.png)
-- **Reembolsos:** reembolsos que la pasarela rechazó (reintentar o marcar como resuelto), reembolso de un solo boleto buscando la orden, y la lista de todos los reembolsos.
+- **Reembolsos:** reembolsos que la pasarela rechazó (reintentar o marcar como resuelto: al resolverlo el boleto deja de ser válido y la orden suma el reembolso), reembolso de un solo boleto buscando la orden, y la lista de todos los reembolsos.
   ![Reembolsos](manual/admin-3-reembolsos-fallidos.png)
 - **Cancelaciones:** aprueba o rechaza las solicitudes de los organizadores. Al aprobar se invalidan todos los QR y se reembolsa el 100 % de cada orden.
   ![Cancelación pendiente](manual/admin-2-cancelacion-pendiente.png)
@@ -134,15 +139,17 @@ El panel tiene pestañas:
   ![Bitácora](manual/admin-6-bitacora.png)
 - **Comisión:** porcentaje del cargo por servicio. El cambio solo aplica a compras nuevas.
   ![Comisión](manual/admin-7-comision.png)
-- **Correos:** copia de cada correo automático con su estado (enviado, sin SMTP o error).
+- **Correos:** copia de cada correo con su estado (enviado, sin SMTP, simulado o error), incluidos los códigos de verificación con el código tapado.
   ![Correos](manual/admin-8-correos.png)
 
 ## Problemas frecuentes
 
 | Problema | Qué hacer |
 | --- | --- |
-| No llega el código de verificación | Falta configurar SMTP en `.env` (ver README). Para ensayar usa las cuentas de demostración. |
+| No llega el código de verificación | Sin `.env`, `npm start` escribe el código en la terminal del servidor. Para correos reales crea `.env` con una cuenta de Gmail y su contraseña de aplicación (ver README) y pruébalo con `npm run correo:prueba -- tu.correo@gmail.com`. |
+| «Demasiados intentos. Espera 15 minutos» | Se juntaron 40 intentos fallidos o códigos enviados desde la misma red. Iniciar y cerrar sesión con éxito no cuenta. |
 | «Tienes una compra en curso» | Solo se permite una compra abierta por cuenta: continúala o cancélala. |
 | El reloj no vuelve a 10:00 | Es a propósito: el tiempo no se reinicia al recargar, cambiar de pestaña o cambiar asientos. |
 | La cámara no abre en el celular | Usa `npm run start:https`, acepta el certificado y da permiso de cámara; o usa «Tomar foto del QR» o la búsqueda manual. |
 | Un correo dice «Sin SMTP» en Administración → Correos | El correo se generó bien, pero no salió porque falta configurar el servidor de correo. |
+| Un correo dice «Simulado» | Lo generó `npm run demo:datos`, que nunca envía correos. |

@@ -23,6 +23,16 @@ export function createNotify(db, { mailer, catalog, tickets, clock = Date.now })
     });
   }
 
+  // The person who asked to be an organizer hears the administrator's answer.
+  function organizerDecision(person, approved, reason = '') {
+    if (!person) return;
+    mailer.send({
+      to: person.email, kind: approved ? 'organizador aprobado' : 'organizador rechazado',
+      subject: approved ? 'Ya eres organizador en eTicket' : 'Tu solicitud de organizador fue rechazada',
+      text: [`Hola, ${person.name}:`, '', approved ? 'La administración aprobó tu cuenta de organizador. Entra a eTicket y abre «Panel» para crear tu primer evento.' : 'La administración rechazó tu solicitud para ser organizador.', ...(approved ? [] : [`Motivo: ${reason}`, '', 'Puedes corregirlo y volver a solicitarlo desde «Mi cuenta».']), '', 'eTicket'].join('\n'),
+    });
+  }
+
   // Sent once when sales use up a function; a released seat allows a new notice later.
   function afterSale(eventId, functionId) {
     const ev = catalog.event(eventId), f = catalog.fn(ev, functionId);
@@ -62,5 +72,5 @@ export function createNotify(db, { mailer, catalog, tickets, clock = Date.now })
     return sent;
   }
 
-  return { eventDecision, afterSale, afterRelease, runScheduled };
+  return { eventDecision, organizerDecision, afterSale, afterRelease, runScheduled };
 }

@@ -1,5 +1,5 @@
 import { accountApi } from './account-ui.js';
-import { $, $$, esc, money, dateTime, percent, localDay, dataTable, STATUS_BADGE } from './ui-utils.js';
+import { $, $$, esc, money, dateTime, percent, localDay, dataTable, STATUS_BADGE, statusLabel } from './ui-utils.js';
 
 export const ADMIN_TABS = [
   ['general', 'General'], ['eventos', 'Eventos'], ['reportes', 'Reportes'], ['usuarios', 'Usuarios'], ['reembolsos', 'Reembolsos'],
@@ -13,7 +13,9 @@ const ACTIONS = {
   'reembolso.emitido': 'Emitió un reembolso', 'reembolso.fallido': 'Reembolso rechazado por la pasarela', 'reembolso.resuelto': 'Resolvió un reembolso fallido',
   'usuario.bloqueado': 'Bloqueó un usuario', 'usuario.desbloqueado': 'Desbloqueó un usuario', 'rol.cambiado': 'Cambió un rol', 'escaneo.revertido': 'Revirtió un escaneo',
   'comision.cambiada': 'Cambió la comisión', 'personal.asignado': 'Asignó personal', 'personal.retirado': 'Retiró personal', 'boleto.transferido': 'Transfirió un boleto', 'funcion.reprogramada': 'Cambió la fecha de una función',
+  'recinto.creado': 'Registró un recinto', 'recinto.editado': 'Editó un recinto', 'recinto.borrado': 'Borró un recinto',
 };
+const ROLE = { comprador: 'Comprador', taquilla: 'Taquilla', organizador: 'Organizador', administrador: 'Administrador' };
 
 export async function renderAdminTab({ app, tab, toast, events }) {
   const body = $('#admin-body');
@@ -30,7 +32,7 @@ export async function renderAdminTab({ app, tab, toast, events }) {
       for (const e of listing.events) if (!rows.some(r => r.id === String(e.id))) rows.push({ id: String(e.id), name: e.name, city: e.city, status: e.status, sample: false });
       body.innerHTML = `<p>Abre el panel de cualquier evento para ver ventas, asistencia, escaneos, personal y cambios.</p><div class="table-scroll"><table class="data-table"><thead><tr><th>Evento</th><th>Ciudad</th><th>Estado</th><th>Disponibilidad</th><th></th></tr></thead><tbody>${rows.map(r => {
         const a = listing.availability?.[r.id];
-        return `<tr><td>${esc(r.name)}${r.sample ? ' <small class="muted">(muestra)</small>' : ''}</td><td>${esc(r.city)}</td><td>${r.status === 'published' ? '<span class="pill ok">Publicado</span>' : r.status === 'cancelled' ? '<span class="pill bad">Cancelado</span>' : `<span class="pill">${esc(r.status)}</span>`}</td><td>${a ? (a.soldOut ? '<span class="pill bad">Agotado</span>' : `${a.available} lugares`) : '—'}</td><td>${['published', 'cancelled'].includes(r.status) ? `<a class="btn secondary small" href="#panel/evento/${encodeURIComponent(r.id)}">Ver panel</a>` : ''}</td></tr>`;
+        return `<tr><td>${esc(r.name)}${r.sample ? ' <small class="muted">(muestra)</small>' : ''}</td><td>${esc(r.city)}</td><td>${r.status === 'published' ? '<span class="pill ok">Publicado</span>' : r.status === 'cancelled' ? '<span class="pill bad">Cancelado</span>' : `<span class="pill">${esc(statusLabel(r.status))}</span>`}</td><td>${a ? (a.soldOut ? '<span class="pill bad">Agotado</span>' : `${a.available} lugares`) : '—'}</td><td>${['published', 'cancelled'].includes(r.status) ? `<a class="btn secondary small" href="#panel/evento/${encodeURIComponent(r.id)}">Ver panel</a>` : ''}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     }
 
@@ -57,11 +59,17 @@ export async function renderAdminTab({ app, tab, toast, events }) {
         const { users } = await accountApi(`admin/users?q=${encodeURIComponent($('#user-q').value)}`, null, 'GET');
         put('#user-results', users.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Nombre</th><th>Correo</th><th>Rol</th><th class="num">Boletos vigentes</th><th>Estado</th><th>Acciones</th></tr></thead><tbody>${users.map(u => `<tr>
           <td>${esc(u.name)}</td><td>${esc(u.email)}</td>
-          <td>${['comprador', 'taquilla'].includes(u.role) ? `<select class="user-role" data-id="${esc(u.id)}" aria-label="Rol de ${esc(u.email)}"><option value="comprador" ${u.role === 'comprador' ? 'selected' : ''}>Comprador</option><option value="taquilla" ${u.role === 'taquilla' ? 'selected' : ''}>Taquilla</option></select>` : esc(u.role)}</td>
+          <td>${u.role === 'administrador' ? ROLE.administrador : `<select class="user-role" data-id="${esc(u.id)}" data-role="${esc(u.role)}" aria-label="Rol de ${esc(u.email)}">${u.role === 'organizador' ? '<option value="organizador" selected>Organizador</option>' : ''}<option value="comprador" ${u.role === 'comprador' ? 'selected' : ''}>Comprador</option><option value="taquilla" ${u.role === 'taquilla' ? 'selected' : ''}>Taquilla</option></select>`}</td>
           <td class="num">${u.tickets}</td>
           <td>${u.blocked ? `<span class="pill bad">Bloqueado</span><br><small class="muted">${esc(u.blockedReason)}</small>` : '<span class="pill ok">Activo</span>'}</td>
-          <td class="row-actions">${['comprador', 'taquilla'].includes(u.role) ? `<button class="btn secondary small save-role" data-id="${esc(u.id)}">Guardar rol</button>` : ''}${u.role === 'administrador' ? '' : u.blocked ? `<button class="btn secondary small unblock" data-id="${esc(u.id)}">Desbloquear</button>` : `<button class="btn secondary small block" data-id="${esc(u.id)}">Bloquear</button>`}</td></tr>`).join('')}</tbody></table></div><p class="muted small-note">Una cuenta bloqueada puede entrar y usar sus boletos, pero no puede comprar.</p>` : '<p class="muted">Sin resultados.</p>');
-        $$('.save-role').forEach(b => b.onclick = async () => { try { await accountApi('admin/users', { userId: b.dataset.id, role: document.querySelector(`.user-role[data-id="${CSS.escape(b.dataset.id)}"]`).value }, 'PUT'); toast('Rol actualizado.'); search(); } catch (error) { toast(error.message); } });
+          <td class="row-actions">${u.role === 'administrador' ? '' : `<button class="btn secondary small save-role" data-id="${esc(u.id)}">Guardar rol</button>`}${u.role === 'administrador' ? '' : u.blocked ? `<button class="btn secondary small unblock" data-id="${esc(u.id)}">Desbloquear</button>` : `<button class="btn secondary small block" data-id="${esc(u.id)}">Bloquear</button>`}</td></tr>`).join('')}</tbody></table></div><p class="muted small-note">Una cuenta bloqueada puede entrar y usar sus boletos, pero no puede comprar.</p>` : '<p class="muted">Sin resultados.</p>');
+        // Organizer accounts are granted through their request; here the role can only be taken away.
+        $$('.save-role').forEach(b => b.onclick = async () => {
+          const select = document.querySelector(`.user-role[data-id="${CSS.escape(b.dataset.id)}"]`), role = select.value, before = select.dataset.role;
+          if (role === before) { toast('El rol no cambió.'); return; }
+          if (before === 'organizador' && !confirm(`¿Quitar el rol de organizador y dejarlo como ${ROLE[role].toLowerCase()}? Sus eventos siguen como están, pero ya no podrá administrarlos.`)) return;
+          try { await accountApi('admin/users', { userId: b.dataset.id, role }, 'PUT'); toast('Rol actualizado.'); search(); } catch (error) { toast(error.message); }
+        });
         $$('.block').forEach(b => b.onclick = async () => { const reason = prompt('Motivo del bloqueo (queda en la bitácora):'); if (!reason) return; try { await accountApi(`admin/users/${b.dataset.id}/block`, { blocked: true, reason }); toast('Usuario bloqueado.'); search(); } catch (error) { toast(error.message); } });
         $$('.unblock').forEach(b => b.onclick = async () => { try { await accountApi(`admin/users/${b.dataset.id}/block`, { blocked: false }); toast('Usuario desbloqueado.'); search(); } catch (error) { toast(error.message); } });
       };
@@ -127,8 +135,8 @@ export async function renderAdminTab({ app, tab, toast, events }) {
     if (tab === 'correos') {
       const { messages } = await accountApi('admin/outbox', null, 'GET');
       if (!body.isConnected) return;
-      const state = { enviado: '<span class="pill ok">Enviado</span>', 'sin SMTP': '<span class="pill warn">Sin SMTP</span>', error: '<span class="pill bad">Error</span>', pendiente: '<span class="pill">Pendiente</span>' };
-      body.innerHTML = `<p>Copia de los correos automáticos: confirmaciones con boletos, transferencias, cambios de fecha, cancelaciones, reembolsos, aprobaciones, agotados y recordatorios.${messages.some(m => m.status === 'sin SMTP') ? ' Los marcados «Sin SMTP» no salieron porque falta configurar el correo en <code>.env</code>.' : ''}</p>${messages.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Fecha</th><th>Para</th><th>Asunto</th><th>Tipo</th><th>Adjuntos</th><th>Estado</th></tr></thead><tbody>${messages.map(m => `<tr><td>${esc(dateTime(m.created))}</td><td>${esc(m.to)}</td><td>${esc(m.subject)}</td><td>${esc(m.kind)}</td><td>${m.attachments.length ? esc(m.attachments.join(', ')) : '—'}</td><td>${state[m.status] || esc(m.status)}${m.error ? `<br><small>${esc(m.error)}</small>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no se ha enviado ningún correo.</p>'}`;
+      const state = { enviado: '<span class="pill ok">Enviado</span>', 'sin SMTP': '<span class="pill warn">Sin SMTP</span>', simulado: '<span class="pill">Simulado</span>', error: '<span class="pill bad">Error</span>', pendiente: '<span class="pill">Pendiente</span>' };
+      body.innerHTML = `<p>Copia de los correos automáticos: códigos de verificación y recuperación (con el código tapado), confirmaciones con boletos, transferencias, cambios de fecha, cancelaciones, reembolsos, aprobaciones, agotados y recordatorios.${messages.some(m => m.status === 'sin SMTP') ? ' Los marcados «Sin SMTP» no salieron porque falta configurar el correo en <code>.env</code>; pruébalo con <code>npm run correo:prueba</code>.' : ''}${messages.some(m => m.status === 'simulado') ? ' Los marcados «Simulado» los generó <code>npm run demo:datos</code> y no se enviaron.' : ''}</p>${messages.length ? `<div class="table-scroll"><table class="data-table"><thead><tr><th>Fecha</th><th>Para</th><th>Asunto</th><th>Tipo</th><th>Adjuntos</th><th>Estado</th></tr></thead><tbody>${messages.map(m => `<tr><td>${esc(dateTime(m.created))}</td><td>${esc(m.to)}</td><td>${esc(m.subject)}</td><td>${esc(m.kind)}</td><td>${m.attachments.length ? esc(m.attachments.join(', ')) : '—'}</td><td>${state[m.status] || esc(m.status)}${m.error ? `<br><small>${esc(m.error)}</small>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no se ha enviado ningún correo.</p>'}`;
     }
   } catch (error) { fail(error); }
 }

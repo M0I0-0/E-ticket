@@ -11,10 +11,11 @@ import { createAccounts } from './accounts.js';
 const MINUTE = 60000;
 
 // The hold clock is injected so a test can move time forward without waiting 10 minutes.
+// It starts on a fixed day before the sample events, so the tests keep passing after their dates.
 async function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eticket-holds-'));
   const filename = join(dir, 'holds.sqlite');
-  const messages = [], clock = { now: Date.now() };
+  const messages = [], clock = { now: new Date('2026-10-15T12:00:00').getTime() };
   const app = createAccounts({ ADMIN_EMAIL: 'admin@example.com' }, {
     filename, clock: () => clock.now, log: () => {},
     transport: { async sendMail(message) { messages.push(message); return { accepted: [message.to] }; } },
@@ -46,14 +47,10 @@ async function fixture(t, options = {}) {
   const login = async email => (await request('auth/login', { email, password: 'MiClave123!' })).cookie;
   const hold = (cookie, body) => request('holds', { eventId: 1, functionId: '1', zone: 'Preferente', ...body }, cookie);
   const occupied = async (cookie = '') => (await request('availability?eventId=1&functionId=1&zone=Preferente', null, cookie, 'GET')).body.occupied;
-  return { request, register, login, hold, occupied, filename, advance: ms => { clock.now += ms; } };
+  // Paying is the only way a hold becomes a purchase.
+  const pay = (cookie, hold) => request('payments/charge', { holdId: hold.id, token: 'tok_sandbox_ok', last4: '4242', idempotencyKey: `ik-${hold.id}` }, cookie);
+  return { request, register, login, hold, occupied, pay, filename, advance: ms => { clock.now += ms; } };
 }
-
-const order = (hold, seats) => ({
-  id: `ET-${hold.id.slice(0, 10)}`, eventId: Number(hold.eventId), holdId: hold.id, zone: hold.zone, functionId: hold.functionId,
-  total: 100, time: new Date().toISOString(),
-  tickets: seats.map((seat, i) => ({ seat, owner: 'Comprador', code: `ET-${hold.id.slice(0, 10)}-${i + 1}`, transferred: false })),
-});
 
 test('RN-03 / T08.2 the server stores a 10-minute hold with its exact expiry and never extends it', async t => {
   const f = await fixture(t), buyer = await f.register('buyer@example.com');
@@ -129,7 +126,7 @@ test('Case 3 / T08.7 an abandoned purchase expires, frees its seats, cannot be p
   assert.equal(current.hold, null);
   assert.equal(current.recent.status, 'expired');
   assert.equal((await f.request(`holds/${hold.id}/pay`, {}, buyer)).status, 410);
-  assert.equal((await f.request('orders', { orders: [order(hold, ['D1'])] }, buyer, 'PUT')).status, 410);
+  assert.equal((await f.pay(buyer, hold)).status, 410);
   const summary = (await f.request('admin/holds', null, admin, 'GET')).body;
   assert.equal(summary.counts.expired, 1);
   assert.equal(summary.expired[0].email, 'buyer@example.com');
@@ -159,7 +156,7 @@ test('Case 4 / T08.8 a purchase in payment keeps its seats when the clock reache
   assert.ok((await f.occupied(other)).includes('A7'));
   assert.equal((await f.hold(other, { seats: ['A7'] })).status, 409);
   assert.equal((await f.request(`holds/${hold.id}/cancel`, {}, buyer)).status, 409);
-  assert.equal((await f.request('orders', { orders: [order(hold, ['A7', 'A8'])] }, buyer, 'PUT')).status, 200);
+  assert.equal((await f.pay(buyer, hold)).status, 200);
   const after = (await f.request('holds/current', null, buyer, 'GET')).body;
   assert.equal(after.hold, null);
   assert.equal(after.recent.status, 'completed');
@@ -215,7 +212,7 @@ test('published events count open holds per function and zone and paid holds bec
   assert.equal((await f.request('holds', { eventId, functionId: 'evening', zone: 'Luneta', seats: ['A2'] }, beto)).status, 409);
   assert.equal((await f.request('holds', { eventId, functionId: 'evening', zone: 'Luneta', seats: ['A1'] }, beto)).status, 201);
   await f.request(`holds/${held.id}/pay`, {}, ana);
-  assert.equal((await f.request('orders', { orders: [order(held, ['Acceso 1', 'Acceso 2'])] }, ana, 'PUT')).status, 200);
+  assert.equal((await f.pay(ana, held)).status, 200);
   const after = (await f.request(general, null, beto, 'GET')).body;
   assert.equal(after.sold, 2);
   assert.equal(after.available, 0);
@@ -223,11 +220,13 @@ test('published events count open holds per function and zone and paid holds bec
   assert.equal(listed.zones.find(z => z.name === 'General').sold, 2);
 });
 
-test('legacy orders cannot take held seats, box office accounts cannot hold and polling does not extend sessions', async t => {
+test('the old order route cannot take seats, box office accounts cannot hold and polling does not extend sessions', async t => {
   const f = await fixture(t), admin = await f.register('admin@example.com'), ana = await f.register('ana@example.com'), beto = await f.register('beto@example.com');
   assert.equal((await f.hold(ana, { seats: ['B3'] })).status, 201);
-  const legacy = { id: 'legacy-1', eventId: 1, total: 100, time: new Date().toISOString(), tickets: [{ seat: 'B3', owner: 'Beto', code: 'legacy-1', transferred: false }] };
-  assert.equal((await f.request('orders', { orders: [legacy] }, beto, 'PUT')).status, 409);
+  const legacy = { id: 'legacy-1', eventId: 1, total: 100, time: new Date().toISOString(), tickets: [{ seat: 'B5', owner: 'Beto', code: 'legacy-1', transferred: false }] };
+  assert.equal((await f.request('orders', { orders: [legacy] }, beto, 'PUT')).status, 410);
+  assert.ok(!(await f.occupied(beto)).includes('B5'));
+  assert.equal((await f.hold(beto, { seats: ['B3'] })).status, 409);
   const betoId = (await f.request('auth/me', null, beto, 'GET')).body.user.id;
   assert.equal((await f.request('admin/users', { userId: betoId, role: 'taquilla' }, admin, 'PUT')).status, 200);
   assert.equal((await f.hold(beto, { seats: ['B4'] })).status, 403);

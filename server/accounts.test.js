@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createAccounts } from './accounts.js';
 
+// A fixed "today" before every event used here, so the tests keep passing after those dates.
+const NOW = new Date('2026-10-15T12:00:00').getTime();
+
 async function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'eticket-accounts-'));
   const filename = join(dir, 'accounts.sqlite');
@@ -14,7 +17,7 @@ async function fixture(t, options = {}) {
   const transport = { async sendMail(message) { messages.push(message); return {accepted:[message.to]}; } };
   let app, server, origin;
   async function start() {
-    app = createAccounts(options.adminEmail?{ADMIN_EMAIL:options.adminEmail}:{}, {filename, transport:options.transport || transport});
+    app = createAccounts(options.adminEmail?{ADMIN_EMAIL:options.adminEmail}:{}, {filename, transport:options.transport || transport, clock:() => NOW});
     server = createServer((req,res) => app.middleware(req,res,() => {res.statusCode=404;res.end();}));
     await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
     origin = `http://127.0.0.1:${server.address().port}`;
@@ -63,16 +66,21 @@ test('registration requires email verification and creates a session after valid
   assert.equal(db.prepare('SELECT COUNT(*) AS count FROM challenges').get().count,0);db.close();
 });
 
-test('users cannot read or overwrite another account orders',async t=>{
+test('each account only reads its own purchases and the old route that saved orders is gone',async t=>{
   const f=await fixture(t), alice=await f.verified('alice@gmail.com'), bob=await f.verified('bob@outlook.com');
-  const order={id:'test-1',eventId:1,total:100,time:new Date().toISOString(),tickets:[{seat:'A1',owner:'Alice',code:'test',transferred:false}]};
-  assert.equal((await f.request('orders',{orders:[order]},alice.cookie,'PUT')).status,200);
+  const held=(await f.request('holds',{eventId:1,functionId:'1',zone:'Preferente',seats:['A1']},alice.cookie)).body.hold;
+  const paid=await f.request('payments/charge',{holdId:held.id,token:'tok_sandbox_ok',last4:'4242',idempotencyKey:'ik-history'},alice.cookie);
+  assert.equal(paid.status,200);
   assert.deepEqual((await f.request('orders',null,bob.cookie,'GET')).body.orders,[]);
-  assert.equal((await f.request('orders',{orders:[order]},'','PUT')).status,401);
+  assert.equal((await f.request('orders',null,'','GET')).status,401);
   await f.restart();
-  assert.deepEqual((await f.request('orders',null,alice.cookie,'GET')).body.orders,[order]);
+  assert.deepEqual((await f.request('orders',null,alice.cookie,'GET')).body.orders.map(order=>order.id),[paid.body.order.id]);
   assert.deepEqual((await f.request('orders',null,bob.cookie,'GET')).body.orders,[]);
-  assert.equal((await f.request('orders',{orders:[order]},alice.cookie,'PUT',{origin:'https://otra-web.test'})).status,403);
+  // PUT /api/orders saved whatever the browser sent and took seats without a payment.
+  const fake={id:'test-1',eventId:1,total:0,time:new Date().toISOString(),tickets:[{seat:'A2',owner:'Alice',code:'test',transferred:false}]};
+  assert.equal((await f.request('orders',{orders:[fake]},alice.cookie,'PUT')).status,410);
+  assert.ok(!(await f.request('availability?eventId=1&functionId=1&zone=Preferente',null,bob.cookie,'GET')).body.occupied.includes('A2'));
+  assert.equal((await f.request('holds',{eventId:1,functionId:'1',zone:'Preferente',seats:['B1']},bob.cookie,'POST',{origin:'https://otra-web.test'})).status,403);
 });
 
 test('registration validates names, matching passwords, complexity and duplicate emails',async t=>{
@@ -112,9 +120,12 @@ test('role routes protect organizer, administrator and event publication flows',
   assert.equal((await f.request('events',null,'','GET')).body.events.length,0);
   assert.equal((await f.request(`events/${draft.body.id}/decision`,{approve:true},admin.cookie)).status,200);
   assert.equal((await f.request('events',null,'','GET')).body.events.length,1);
-  const sale={id:'dynamic-sale',eventId:Number(draft.body.id),total:232,time:new Date().toISOString(),tickets:[{seat:'Acceso 1',owner:'Comprador',code:'dynamic-ticket',transferred:false}]};
-  assert.equal((await f.request('orders',{orders:[sale]},organizer.cookie,'PUT')).status,200);
+  const sale=(await f.request('holds',{eventId:draft.body.id,functionId:'1',zone:'General',quantity:1},organizer.cookie)).body.hold;
+  assert.equal((await f.request('payments/charge',{holdId:sale.id,token:'tok_sandbox_ok',last4:'4242',idempotencyKey:'ik-role-sale'},organizer.cookie)).status,200);
+  // A published event keeps selling: its name, zones and prices stay, its texts can change and it is cancelled, not deleted.
   assert.equal((await f.request('events',{id:draft.body.id,name:'Concierto editado',date:'2026-11-01',hour:'20:00',functions:[{id:'1',date:'2026-11-01',hour:'20:00'}],zones:[{name:'General',price:250,capacity:60}]},organizer.cookie)).status,409);
+  assert.equal((await f.request('events',{id:draft.body.id,desc:'Con invitados sorpresa'},organizer.cookie)).body.status,'published');
+  assert.equal((await f.request(`events/${draft.body.id}/submit`,{},organizer.cookie)).status,409);
   assert.equal((await f.request(`events/${draft.body.id}/delete`,{},organizer.cookie)).status,409);
   // Gate access needs box-office staff assigned to the function; codes a buyer saves by hand are not tickets.
   const scan=(code)=>f.request('scan',{code,eventId:draft.body.id,functionId:'1',gate:'Puerta 1'},organizer.cookie);
@@ -157,11 +168,16 @@ test('published events enforce each function and zone, reserved seats, courtesy 
   await f.request(`events/${draft.body.id}/submit`,{},organizer.cookie);
   await f.request(`events/${draft.body.id}/decision`,{approve:true},admin.cookie);
   assert.equal((await f.request('organizer/venues',null,buyer.cookie,'GET')).status,403);
-  const order=(id,functionId,zone,tickets)=>({id,eventId:Number(draft.body.id),functionId,zone,total:100,time:new Date().toISOString(),tickets});
-  const ticket=(seat,code)=>({seat,owner:'Buyer',code,transferred:false});
-  assert.equal((await f.request('orders',{orders:[order('blocked-seat','matinee','Luneta',[ticket('A2','blocked')])]},buyer.cookie,'PUT')).status,409);
-  assert.equal((await f.request('orders',{orders:[order('matinee-sale','matinee','Luneta',[ticket('A1','matinee-a1')])]},buyer.cookie,'PUT')).status,200);
-  assert.equal((await f.request('orders',{orders:[order('evening-sale','evening','Luneta',[ticket('A1','evening-a1')])]},organizer.cookie,'PUT')).status,200);
-  assert.equal((await f.request('orders',{orders:[order('matinee-duplicate','matinee','Luneta',[ticket('A1','duplicate-a1')])]},organizer.cookie,'PUT')).status,409);
-  assert.equal((await f.request('orders',{orders:[order('invalid-function','invalid','General',[ticket('Acceso 1','invalid-fn')])]},organizer.cookie,'PUT')).status,400);
+  const hold=(cookie,functionId,zone,body)=>f.request('holds',{eventId:draft.body.id,functionId,zone,...body},cookie);
+  const pay=(cookie,holdId,key)=>f.request('payments/charge',{holdId,token:'tok_sandbox_ok',last4:'4242',idempotencyKey:key},cookie);
+  const blocked=await hold(buyer.cookie,'matinee','Luneta',{seats:['A2']});
+  assert.equal(blocked.status,409);
+  assert.equal(blocked.body.reason,'blocked');
+  const matinee=await hold(buyer.cookie,'matinee','Luneta',{seats:['A1']});
+  assert.equal((await pay(buyer.cookie,matinee.body.hold.id,'ik-matinee')).status,200);
+  const evening=await hold(organizer.cookie,'evening','Luneta',{seats:['A1']});
+  assert.equal((await pay(organizer.cookie,evening.body.hold.id,'ik-evening')).status,200);
+  assert.equal((await hold(admin.cookie,'matinee','Luneta',{seats:['A1']})).status,409);
+  assert.equal((await hold(admin.cookie,'invalid','General',{quantity:1})).status,400);
+  assert.equal((await hold(admin.cookie,'matinee','General',{quantity:2})).status,409);
 });

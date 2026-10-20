@@ -2,6 +2,8 @@ import { accountApi } from './account-ui.js';
 import { $, esc, functionLabel } from './ui-utils.js';
 
 let stream = null, loop = 0, busy = false, lastCode = '', lastAt = 0;
+// The camera keeps seeing a QR that is still in front of it; the same code is read again only after this pause.
+const SAME_CODE_MS = 10000;
 let decoder = null;
 // The live camera needs a secure page (https or localhost); a photo works everywhere.
 export function stopScanner() {
@@ -45,7 +47,7 @@ export async function renderScanner({ app, user, toast, params = [] }) {
   const chosen = assignments.find(a => a.eventId === params[0] && a.functionId === params[1]);
   if (!chosen) {
     app.innerHTML = `<div class="eyebrow">Taquilla · Control de acceso</div><h1>Elige tu evento</h1><p>Hola, ${esc(user.name)}. Solo ves los eventos y funciones que la administración o el organizador te asignaron.</p>
-      ${assignments.length ? `<form id="gate-form" class="panel form-card"><div class="field"><label for="assignment">Evento y función</label><select id="assignment" required>${assignments.map((a, i) => `<option value="${i}" ${a.eventId === saved.eventId && a.functionId === saved.functionId ? 'selected' : ''}>${esc(a.eventName)} · ${esc(functionLabel(a.date, a.hour))}${a.status !== 'published' ? ' (cancelado)' : ''}</option>`).join('')}</select></div>
+      ${assignments.length ? `<form id="gate-form" class="panel form-card"><div class="field"><label for="assignment">Evento y función</label><select id="assignment" required>${assignments.map((a, i) => `<option value="${i}" ${a.eventId === saved.eventId && a.functionId === saved.functionId ? 'selected' : ''}>${esc(a.eventName)} · ${esc(functionLabel(a.date, a.hour))}${a.status === 'cancelled' ? ' (cancelado)' : a.status !== 'published' ? ' (no publicado)' : ''}</option>`).join('')}</select></div>
         <div class="field"><label for="gate">Puerta</label><input id="gate" required maxlength="40" value="${esc(saved.gate || 'Puerta 1')}"></div><button class="btn" style="width:100%">Comenzar a validar</button></form>`
         : '<div class="empty"><h2>Aún no tienes eventos asignados</h2><p>Pide a la administración o al organizador que te asigne una función.</p></div>'}`;
     $('#gate-form')?.addEventListener('submit', event => {
@@ -74,7 +76,7 @@ export async function renderScanner({ app, user, toast, params = [] }) {
   async function validate(raw, source) {
     const code = String(raw || '').trim();
     if (!code || busy) return;
-    if (code === lastCode && Date.now() - lastAt < 3000) return;
+    if (code === lastCode && Date.now() - lastAt < SAME_CODE_MS) return;
     busy = true; lastCode = code; lastAt = Date.now();
     try {
       const r = await accountApi('scan', { code, eventId: chosen.eventId, functionId: chosen.functionId, gate });

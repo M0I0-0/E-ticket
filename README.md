@@ -18,8 +18,10 @@ Los comandos tambien funcionan desde la carpeta superior AgileKanban2.
 - `npm run serve`: sirve dist/ y la API en el puerto 3000; requiere compilar primero.
 - `npm start -- --host 0.0.0.0`: igual, accesible desde otros dispositivos de la red.
 - `npm run start:https`: igual, con https de prueba; la camara del celular solo abre en paginas seguras.
-- `npm test`: 45 pruebas de cuentas, apartados, pagos, boletos, acceso, reportes,
-  reembolsos y seguridad.
+- `npm test`: 68 pruebas de cuentas, apartados, pagos, boletos, acceso, reportes,
+  reembolsos, seguridad y las correcciones de la revisión QA (`server/qa.test.js`).
+- `npm run correo:prueba -- tu.correo@gmail.com`: envía un correo de prueba con los
+  datos de `.env` y explica el error si falla.
 - `npm run prueba:carga`: 150 compradores a la vez sobre los mismos lugares (T12.3).
 - `npm run demo:datos`: cuentas de demostracion verificadas sin SMTP, organizadora,
   taquilla, dos eventos publicados y personal asignado. `-- --ventas` agrega compras
@@ -28,8 +30,18 @@ Los comandos tambien funcionan desde la carpeta superior AgileKanban2.
 ## Registro y acceso
 
 El registro pide nombres, apellidos, correo y contrasena. La cuenta se activa
-despues de confirmar un codigo enviado por correo; es necesario configurar SMTP.
+despues de confirmar un codigo enviado por correo. Sin SMTP, `npm start` escribe el
+codigo en su terminal para poder probar; `npm run serve` siempre exige SMTP.
 La contrasena requiere de 6 a 15 caracteres, una mayuscula y un caracter especial.
+
+### Correo con Gmail
+
+El archivo `.env` no se sube a GitHub: cada persona que corre el servidor necesita
+su copia. Usen una cuenta de Gmail del equipo con verificacion en 2 pasos, creen
+una contrasena de aplicacion (Seguridad → Verificacion en 2 pasos → Contrasenas de
+aplicaciones), copien `.env.example` como `.env`, llenen `SMTP_USER`, `SMTP_PASS`
+(las 16 letras sin espacios) y `SMTP_FROM`, y prueben con `npm run correo:prueba`.
+Gmail siempre envia como la cuenta de `SMTP_USER`.
 
 ## Cuentas y almacenamiento
 
@@ -122,22 +134,26 @@ que la pasarela sea la fuente de verdad y cobrando exactamente una vez:
   cancelacion aprobada por la administracion con reembolso del 100 %, cambio de
   fecha con 10 dias para pedir reembolso y reembolso individual.
 - **Administracion (T10):** panel por evento, reportes con CSV, bloqueo de usuarios,
-  comision configurable, bitacora y bandeja de correos.
+  comision configurable, bitacora y bandeja de correos. Tambien edita y borra
+  recintos, cancela eventos sin esperar al organizador y quita el rol de organizador.
 - **Seguridad:** configura `PAYMENT_WEBHOOK_SECRET` en `.env`; sin esa firma el
   webhook de pagos esta deshabilitado.
 
 ## Roles y administracion
 
 Configura `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` y `SMTP_FROM` en
-`.env` para enviar codigos de verificacion y recuperacion. Sin SMTP, el registro
-no activa la cuenta. Configura `ADMIN_EMAIL` con el correo de la primera cuenta
-administradora; se asigna al registrarse. Las sesiones vencen tras 30 minutos
-sin actividad y cinco intentos fallidos bloquean el acceso durante 15 minutos.
+`.env` para enviar codigos de verificacion y recuperacion. Sin SMTP, solo `npm start`
+permite registrarse (el codigo sale en la terminal). Configura `ADMIN_EMAIL` con el
+correo de la primera cuenta administradora; se asigna al registrarse. Las sesiones
+vencen tras 30 minutos sin actividad, cinco intentos fallidos bloquean la cuenta
+durante 15 minutos y 40 intentos fallidos o codigos enviados desde una misma IP
+pausan el acceso 15 minutos (iniciar y cerrar sesion con exito no cuenta).
 
 El comprador solicita el rol de organizador desde **Mi cuenta**. El administrador
 puede aprobar solicitudes, registrar recintos y revisar eventos. Los eventos
-aprobados se guardan en el servidor y aparecen en la cartelera. Cobros y entradas
-siguen siendo simulados.
+aprobados se guardan en el servidor y aparecen en la cartelera; al editarlos solo
+cambian sus textos, su limite por compra y su fin de venta, y siguen a la venta.
+Cobros y reembolsos siguen siendo simulados.
 
 ### Matriz de acceso revisada
 

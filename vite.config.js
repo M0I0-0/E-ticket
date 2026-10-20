@@ -13,7 +13,8 @@ export default defineConfig(({ mode }) => {
     {
     name: 'accounts-api',
     configureServer(server) {
-      const accounts = createAccounts(env);
+      // npm start only: without SMTP the verification codes appear in this terminal.
+      const accounts = createAccounts(env, { devMail: true });
       server.middlewares.use(accounts.middleware);
       server.httpServer?.once('close', accounts.close);
       // Private server files must never be served by the development server.
