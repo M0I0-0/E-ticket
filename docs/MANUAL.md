@@ -82,9 +82,11 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
 ## 3. Organizador
 
 1. Desde «Mi cuenta», un comprador pulsa «Enviar solicitud» para ser organizador. La administración la aprueba o la rechaza con un motivo.
-2. En «Panel» → «Crear evento» llena nombre, recinto, funciones (una por línea: `AAAA-MM-DD,HH:MM`, siempre futuras), zonas, asientos de cortesía o prensa, límite por compra (1 a 6) y ventana de venta. Guarda y pulsa «Enviar a revisión».
-   - **Zonas:** una por línea, `nombre,precio,cupo,accesibles,filas,asientos por fila,bloqueados`. En una zona numerada el cupo debe ser filas × asientos por fila; las filas van de la A a la Z y siguen con AA, AB… La última columna bloquea asientos solo de esa zona (separados por espacio, por ejemplo `A1 A2`); el campo de bloqueados de abajo los bloquea en todas.
-   - Si eliges un recinto, sus zonas se copian **sin precio**: escribe el de cada una. Si algo está mal, el aviso dice en qué línea.
+2. En «Panel» → «Crear evento» llena los datos del evento (nombre, artista, categoría, recinto, ciudad, límite por compra de 1 a 6 y descripción), las funciones, las zonas y la ventana de venta. Guarda y pulsa «Enviar a revisión».
+   - **Funciones:** toca los días en el calendario; cada día se agrega con la hora indicada arriba («Hora de las fechas que agregues»). En la lista puedes cambiar la hora de cada fecha, usar «Otra hora» para dos funciones el mismo día o «Quitar». Los días que ya pasaron no se pueden elegir.
+   - **Zonas:** «+ Zona numerada» o «+ Zona general». Cada zona tiene nombre y precio. Una zona numerada pide filas y asientos por fila, y el cupo se calcula solo (las filas van de la A a la Z y siguen con AA, AB…). Una zona general pide su cupo.
+   - **Asientos accesibles y de cortesía o prensa:** escríbelos (por ejemplo `A1 A2`) o pulsa «Marcar asientos en el mapa» y tócalos: elige «Bloquear» o «Marcar accesible» y toca cada asiento; otro toque quita la marca.
+   - Si eliges un recinto, su ciudad y sus zonas se copian **sin precio**: escribe el de cada una. Si falta algo, el aviso aparece junto al campo.
    ![Mis eventos](manual/organizador-1-mis-eventos.png)
 3. **Un evento publicado sigue a la venta.** «Editar textos» cambia la descripción, el artista, la categoría, el límite por compra y el fin de venta. El nombre, el recinto, las zonas y los precios ya no cambian; la fecha se mueve con «Cambiar fecha» y, si hay que suspenderlo, se pide su cancelación (un evento publicado no se borra).
 4. Cuando el evento está publicado, pulsa **«Panel del evento»**:
@@ -123,7 +125,7 @@ eTicket es una boletera para conciertos, teatro, festivales y comedia. Hay cinco
 
 El panel tiene pestañas:
 
-- **General:** pagos sin boletos (RN-12), compras expiradas, solicitudes de organizador (la decisión se avisa por correo), recintos y eventos por revisar. Cada evento en revisión muestra sus funciones, zonas, precios, bloqueados y venta antes de aprobarlo. Los recintos se registran, se editan y se borran; los cambios no afectan a eventos ya creados.
+- **General:** pagos sin boletos (RN-12), compras expiradas, solicitudes de organizador (la decisión se avisa por correo), recintos y eventos por revisar. Cada evento en revisión muestra sus funciones, zonas, precios, bloqueados y venta antes de aprobarlo. Los recintos se registran, se editan y se borran con el mismo formulario de zonas que usa el organizador (filas y asientos por fila, o cupo si es general); los cambios no afectan a eventos ya creados.
   ![General](manual/admin-1-general.png)
 - **Eventos:** todos los eventos con su disponibilidad; «Ver panel» abre las mismas cifras que ve el organizador y, en un evento publicado, **«Cancelar evento y reembolsar»** sin esperar la solicitud del organizador.
   ![Eventos](manual/admin-9-eventos.png)

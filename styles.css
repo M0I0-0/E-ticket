@@ -860,6 +860,271 @@ footer span {
 .info-list.compact dd {
   font-size: 14px;
 }
+/* Administration · General: every section takes the full width. */
+.request-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+  gap: 14px;
+}
+.review-list {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
+  gap: 18px;
+  align-items: start;
+}
+.request-card,
+.review-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #414152;
+  border-radius: 12px;
+  background: var(--bg);
+}
+.request-card .pill,
+.review-card .badge {
+  align-self: flex-start;
+}
+.request-card input {
+  margin-top: 6px;
+}
+.review-card h3 {
+  margin: 4px 0 0;
+}
+.review-card .field {
+  margin: 8px 0;
+}
+.venue-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+.venue-layout h3 {
+  margin-top: 0;
+}
+
+/* Event editor: functions on a calendar and one card per zone (event-form.js). */
+.editor-card {
+  max-width: 920px;
+  margin: 22px auto;
+}
+.form-block {
+  min-width: 0;
+  margin: 0 0 28px;
+  padding: 0;
+  border: 0;
+}
+.form-block legend {
+  padding: 0;
+  margin-bottom: 12px;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--light);
+}
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 18px;
+}
+.fn-picker {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.calendar {
+  padding: 12px;
+  border: 1px solid #414152;
+  border-radius: 12px;
+  background: var(--bg);
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cal-title {
+  display: inline-block;
+}
+.cal-title::first-letter {
+  text-transform: uppercase;
+}
+.cal-nav {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #59586c;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 18px;
+}
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.cal-week {
+  padding: 4px 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cal-day {
+  position: relative;
+  aspect-ratio: 1;
+  min-height: 34px;
+  border: 1px solid #3a3b4b;
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+}
+.cal-day:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.cal-day.today {
+  border-color: var(--light);
+}
+.cal-day.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #161826;
+  font-weight: 700;
+}
+.cal-day small {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  font-size: 10px;
+}
+.cal-day:disabled {
+  opacity: 0.3;
+}
+.fn-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fn-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 8px 0;
+  border-bottom: 1px solid #3a3a4c;
+}
+.fn-date {
+  display: inline-block;
+  flex: 1 1 200px;
+}
+.fn-date::first-letter {
+  text-transform: uppercase;
+}
+.fn-list .field {
+  margin: 0;
+}
+.fn-list input[type="time"] {
+  width: auto;
+  min-height: 40px;
+  padding: 6px 10px;
+}
+.zone-card {
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid #414152;
+  border-radius: 12px;
+  background: var(--bg);
+}
+.zone-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.zone-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0 14px;
+}
+.zone-marks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+.zone-summary {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--light);
+}
+.zone-add {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.zone-map {
+  margin-top: 14px;
+}
+.mark-modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.mark-modes [aria-pressed="true"] {
+  background: var(--indigo);
+  border-color: var(--accent);
+}
+.mark-grid {
+  display: grid;
+  gap: 4px;
+  align-items: center;
+  width: max-content;
+  min-width: 100%;
+}
+.mark-grid > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.mark-seat {
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  border: 1px solid #59586c;
+  border-radius: 6px 6px 3px 3px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+}
+.mark-seat.blocked {
+  background: #343440;
+  border-style: dashed;
+  color: #ff8a95;
+}
+.mark-seat.accessible {
+  border: 2px solid var(--light);
+  color: var(--light);
+}
+[aria-invalid="true"] {
+  border-color: #e35d6a !important;
+}
+.field-error {
+  margin: 6px 0 0;
+  min-height: 0;
+}
+@media (max-width: 800px) {
+  .editor-grid,
+  .fn-picker,
+  .zone-marks,
+  .venue-layout {
+    grid-template-columns: 1fr;
+  }
+}
 .seat-popover {
   position: absolute;
   z-index: 6;
@@ -1107,6 +1372,13 @@ section.panel + section.panel,
 .panel + .split,
 .split + .panel {
   margin-top: 22px;
+}
+/* Panels side by side in a .split start at the same height. */
+.split > section.panel + section.panel {
+  margin-top: 0;
+}
+.cards > * {
+  min-width: 0;
 }
 .admin-tabs {
   display: flex;

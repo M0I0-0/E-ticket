@@ -1,6 +1,6 @@
 # Contexto del proyecto eTicket
 
-Estado al 18 de octubre de 2026: rama `main` en el commit `dd02e51` (la Entrega 3 ya está en `82559bf`) más las correcciones de la revisión QA, que están en la copia de trabajo sin commit. La evidencia de la entrega está en [`ENTREGA-3.md`](ENTREGA-3.md) y la guía por rol en [`MANUAL.md`](MANUAL.md).
+Estado al 21 de octubre de 2026: rama `main` en el commit `cb87ea9` (correcciones de la revisión QA) más los formularios nuevos de funciones y zonas, que están en la copia de trabajo sin commit. La evidencia de la entrega está en [`ENTREGA-3.md`](ENTREGA-3.md) y la guía por rol en [`MANUAL.md`](MANUAL.md).
 
 ## Qué es
 
@@ -19,7 +19,8 @@ Tecnología: HTML, CSS y JavaScript sin frameworks, empaquetado con Vite. La API
 | 2026-10-07 | `83abde6` T07 | Cristian Medina | Pago con tarjeta en sandbox, webhook, idempotencia, 3 rechazos y RN-12. |
 | 2026-10-08 | `82559bf` Entrega 3 | Moi | Boletos con QR, escáner, reportes, bitácora, correos automáticos, transferencias, cancelaciones, reembolsos, textos legales y mapa de asientos con apartado al hacer clic. |
 | 2026-10-09 | `dd02e51` revision | Cristian Medina | Evidencia de T09 (`T09_ENTREGA_EVIDENCIA.md`). |
-| 2026-10-18 | sin commit · Revisión QA | — | 44 correcciones de la revisión QA, código de verificación en la terminal sin SMTP, `npm run correo:prueba`, y en administración: editar y borrar recintos, cancelar eventos directamente y quitar el rol de organizador. |
+| 2026-10-20 | `cb87ea9` Revisión QA | Moi | 44 correcciones de la revisión QA, código de verificación en la terminal sin SMTP, `npm run correo:prueba`, y en administración: editar y borrar recintos, cancelar eventos directamente y quitar el rol de organizador. |
+| 2026-10-21 | sin commit · Formularios | — | Funciones elegidas en un calendario, zonas con su propio formulario y mapa para marcar asientos, y el panel General de administración sin cuadros flotantes. |
 
 - **T03 (base):** cartelera con filtros, detalle, mapa de asientos y zona general, compra de demostración, Mis boletos, historial y mapa de navegación. Los 5 eventos de muestra viven en `app.js`.
 - **Cambios Roger:** registro con código por correo, recuperación de contraseña, sesión de 30 minutos sin actividad, bloqueo tras 5 intentos, roles con su panel, recintos y eventos con revisión, varias funciones, zonas con asientos, asientos bloqueados, límite por compra y ventana de venta.
@@ -54,6 +55,7 @@ Cuentas de demostración (contraseña `Demo123!`, todas `@eticket.test`): `ana.d
 | `organizer-ui.js` | Panel de un evento: cifras, ventas, asistencia, escaneos y reversión, personal, cambio de fecha y cancelación. |
 | `admin-ui.js` | Pestañas de administración: eventos, reportes, usuarios, reembolsos, cancelaciones, bitácora, comisión y correos. |
 | `roles-ui.js` | Entrada al panel de cada rol, editor de eventos del organizador y pestaña General de administración. |
+| `event-form.js` | Calendario para elegir funciones y tarjetas de zona (con mapa para marcar asientos accesibles y bloqueados), usados por el editor de eventos y el de recintos. |
 | `account-ui.js` | `accountApi` (envoltura de `fetch` para `/api`) y pantallas de registro, verificación, inicio de sesión y recuperación. |
 | `legal.js` | Aviso de privacidad, términos, política de reembolsos y su resumen antes de pagar. |
 | `ui-utils.js` | Funciones compartidas de formato y tablas. |
@@ -223,7 +225,7 @@ Además: `npm run prueba:carga` (T12.3) y una prueba en Chrome y Edge con 43 com
 
 ## Pendientes y deuda técnica
 
-Pendientes del equipo: commit de la revisión QA; probar el escáner en un Android y un iPhone reales; Safari y Firefox; crear el `.env` con una cuenta de Gmail del equipo para la demo (`npm run correo:prueba` lo comprueba); que un integrante siga el manual de un rol que no programó; ensayar la presentación. Los eventos de muestra conservan sus fechas (14 de noviembre a 12 de diciembre de 2026): después de cada fecha ese evento aparece como finalizado. T12.1 y T12.2 se omitieron porque necesitan el texto de las reglas, el guion y Jira.
+Pendientes del equipo: commit de los formularios nuevos de funciones y zonas; probar el escáner en un Android y un iPhone reales; Safari y Firefox; crear el `.env` con una cuenta de Gmail del equipo para la demo (`npm run correo:prueba` lo comprueba); que un integrante siga el manual de un rol que no programó; ensayar la presentación. Los eventos de muestra conservan sus fechas (14 de noviembre a 12 de diciembre de 2026): después de cada fecha ese evento aparece como finalizado. T12.1 y T12.2 se omitieron porque necesitan el texto de las reglas, el guion y Jira.
 
 Deuda técnica:
 
